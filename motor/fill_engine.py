@@ -224,9 +224,11 @@ def _apply_exhibits(document_xml: str, tab_groups: list[dict]) -> str:
 
 
 def _resolve_values(case: dict, document_instance: dict) -> dict[str, str]:
+    from motor.case_store import a_number_para_documento, nombre_para_documento
+
     values = {
-        "cliente_nombre": case["cliente_nombre"],
-        "a_number": case["a_number"],
+        "cliente_nombre": nombre_para_documento(case),
+        "a_number": a_number_para_documento(case),
         "corte_sede": case["corte_sede"],
         "juez": case["juez"],
         "proxima_audiencia": case["proxima_audiencia"],

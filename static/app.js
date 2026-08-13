@@ -82,6 +82,28 @@ function clearCaseForm() {
   $("#selCaso").value = "";
   $("#casoStatus").textContent = "";
   $("#panelDocumento").style.display = "none";
+  $("#ridersList").innerHTML = "";
+}
+
+function addRiderRow(rider) {
+  const div = document.createElement("div");
+  div.className = "row rider-row";
+  div.style.marginTop = "6px";
+  div.innerHTML = `
+    <input type="text" class="rider-nombre" placeholder="Nombre del rider" style="flex:2; padding:8px 10px; border:1px solid var(--border); border-radius:6px;" value="${escapeHtml(rider?.nombre || "")}">
+    <input type="text" class="rider-a-number" placeholder="A# del rider" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:6px;" value="${escapeHtml(rider?.a_number || "")}">
+    <button type="button" class="danger" onclick="this.closest('.rider-row').remove()">Quitar</button>
+  `;
+  $("#ridersList").appendChild(div);
+}
+
+function collectRiders() {
+  return [...document.querySelectorAll("#ridersList .rider-row")]
+    .map((row) => ({
+      nombre: row.querySelector(".rider-nombre").value.trim(),
+      a_number: row.querySelector(".rider-a-number").value.trim(),
+    }))
+    .filter((r) => r.nombre || r.a_number);
 }
 
 async function loadCase(caseId) {
@@ -98,6 +120,8 @@ async function loadCase(caseId) {
   $("#proxima_audiencia").value = c.proxima_audiencia || "";
   $("#abogado").value = c.abogado || "";
   $("#preparador").value = c.preparador || "";
+  $("#ridersList").innerHTML = "";
+  for (const rider of c.riders || []) addRiderRow(rider);
   $("#casoStatus").textContent = "Caso cargado.";
   $("#panelDocumento").style.display = "block";
   tabCounter = 0;
@@ -121,6 +145,7 @@ function collectCaseForm() {
     proxima_audiencia: $("#proxima_audiencia").value.trim(),
     abogado: $("#abogado").value,
     preparador: $("#preparador").value.trim(),
+    riders: collectRiders(),
   };
 }
 
@@ -489,6 +514,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#btnGuardarCaso").addEventListener("click", guardarCaso);
   $("#plantilla").addEventListener("change", onPlantillaChange);
   $("#btnAgregarTab").addEventListener("click", addTabRow);
+  $("#btnAgregarRider").addEventListener("click", () => addRiderRow());
   $("#btnGenerar").addEventListener("click", generarDocumento);
   $("#paginaInicialLote").addEventListener("input", recalcularPaginas);
 });

@@ -55,6 +55,34 @@ def siguiente_pagina(case: dict) -> int:
     return int(case.get("siguiente_pagina") or 1)
 
 
+def nombre_para_documento(case: dict) -> str:
+    """Nombre del cliente tal como debe escribirse en el documento. Si el
+    caso trae "riders" (co-aplicantes/derivados, ej. cónyuge e hijos en un
+    mismo expediente), se usa "NOMBRE DEL LÍDER et al" en vez del nombre
+    del líder solo."""
+    riders = case.get("riders") or []
+    nombre = case["cliente_nombre"]
+    if riders:
+        return f"{nombre} et al"
+    return nombre
+
+
+def a_number_para_documento(case: dict) -> str:
+    """A# tal como debe escribirse en el documento. Con riders, se arma
+    "A# del líder/últimos 3 dígitos de cada rider" (ej. "A 123-456-789/321/654"),
+    siguiendo el formato que usa el despacho para expedientes de varios
+    A#."""
+    riders = case.get("riders") or []
+    a_number = case["a_number"]
+    if not riders:
+        return a_number
+    partes = [a_number]
+    for rider in riders:
+        digitos = re.sub(r"\D", "", rider.get("a_number", ""))
+        partes.append(digitos[-3:] if digitos else "")
+    return "/".join(p for p in partes if p)
+
+
 def next_tab_letra(ultimo: str | None) -> str:
     if not ultimo:
         return "A"
