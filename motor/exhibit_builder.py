@@ -47,7 +47,17 @@ def _set_first_t_text(xml: str, new_text: str) -> str:
     return re.sub(r"(<w:t[^>]*>)[^<]*(</w:t>)", lambda m: m.group(1) + _xml_escape(new_text) + m.group(2), xml, count=1)
 
 
-def _build_category_xml(categoria: str, pais: str | None) -> str:
+def _replace_in_first_t(xml: str, old: str, new: str) -> str:
+    """Reemplaza `old` por `new` (una vez) dentro del primer <w:t> del fragmento."""
+    return re.sub(
+        r"(<w:t[^>]*>)([^<]*)(</w:t>)",
+        lambda m: m.group(1) + m.group(2).replace(old, new, 1) + m.group(3),
+        xml,
+        count=1,
+    )
+
+
+def _build_category_xml(categoria: str, pais: str | None, anio_cc: str | None, anio_osac: str | None) -> str:
     frag_names = CATEGORY_FRAGMENTS[categoria]
     parts = [_load(n) for n in frag_names]
     if categoria == "form_of_identity":
@@ -55,19 +65,29 @@ def _build_category_xml(categoria: str, pais: str | None) -> str:
             raise ValueError("form_of_identity requiere 'pais'")
         # el fragmento original dice "Respondent's Passport from,"; se inserta
         # el país antes de la coma.
-        parts[1] = re.sub(
-            r"(<w:t[^>]*>)([^<]*)(</w:t>)",
-            lambda m: m.group(1) + m.group(2).replace("from,", f"from {_xml_escape(pais)},") + m.group(3),
-            parts[1],
-            count=1,
-        )
+        parts[1] = _replace_in_first_t(parts[1], "from,", f"from {_xml_escape(pais)},")
+    elif categoria == "country_conditions":
+        if not pais:
+            raise ValueError("country_conditions requiere 'pais'")
+        if not anio_cc:
+            raise ValueError("country_conditions requiere 'anio_cc'")
+        if not anio_osac:
+            raise ValueError("country_conditions requiere 'anio_osac'")
+        # "Country Conditions and Reports," -> "Country Conditions and Reports, {PAIS},"
+        parts[0] = _replace_in_first_t(parts[0], "Reports,", f"Reports, {_xml_escape(pais)},")
+        # "i. Country Reports on Human Rights Practice," -> "...Practice, {AÑO},"
+        parts[1] = _replace_in_first_t(parts[1], "Practice,", f"Practice, {_xml_escape(anio_cc)},")
+        # "ii. OSAC Crime and Safety Reports," -> "...Reports, {AÑO},"
+        parts[2] = _replace_in_first_t(parts[2], "Reports,", f"Reports, {_xml_escape(anio_osac)},")
     return "".join(parts)
 
 
-def build_description_cell_content(categorias: list[str], pais: str | None) -> str:
+def build_description_cell_content(
+    categorias: list[str], pais: str | None, anio_cc: str | None = None, anio_osac: str | None = None
+) -> str:
     spacer = _load("spacer")
     ordered = [c for c in CATEGORY_ORDER if c in categorias]
-    blocks = [_build_category_xml(c, pais) for c in ordered]
+    blocks = [_build_category_xml(c, pais, anio_cc, anio_osac) for c in ordered]
     return spacer.join(blocks)
 
 
@@ -93,7 +113,7 @@ def build_exhibit_table(tab_groups: list[dict]) -> str:
     for tg in tab_groups:
         letra_xml = _set_first_t_text(tab_value_tpl, tg["letra"])
         pages_xml = _set_first_t_text(pages_value_tpl, f"Pgs. {tg['paginas']}")
-        desc_xml = build_description_cell_content(tg["categorias"], tg.get("pais"))
+        desc_xml = build_description_cell_content(tg["categorias"], tg.get("pais"), tg.get("anio_cc"), tg.get("anio_osac"))
         row = (
             "<w:tr>"
             f"<w:tc><w:tcPr><w:tcW w:w=\"1265\" w:type=\"dxa\"/></w:tcPr>{letra_xml}</w:tc>"

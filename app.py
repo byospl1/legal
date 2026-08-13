@@ -107,6 +107,7 @@ def api_generar():
     case_id = body.get("case_id")
     document_instance = body.get("document_instance")
     separar_por_tab = body.get("separar_por_tab", True)
+    generar_pdf = body.get("generar_pdf", False)
     if not case_id or not document_instance:
         return jsonify({"error": "Se requiere case_id y document_instance"}), 400
 
@@ -121,6 +122,7 @@ def api_generar():
             plantillas_dir=PLANTILLAS_DIR,
             output_dir=OUTPUT_DIR,
             separar_por_tab=separar_por_tab,
+            verificar_pdf=generar_pdf,
         )
     except (FillEngineError, ValidationError) as e:
         return jsonify({"error": str(e)}), 400

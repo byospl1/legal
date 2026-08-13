@@ -203,17 +203,32 @@ async function addTabRow() {
       }).join("")}
     </div>
     <div class="pais-field field" style="display:none;">
-      <label>País (para "Respondent's Passport from ___,")</label>
+      <label>País de origen del cliente</label>
       <input type="text" class="tab-pais" placeholder="ej. Mexico">
+    </div>
+    <div class="anio-fields grid" style="display:none; margin-top:6px; margin-left:24px;">
+      <div class="field">
+        <label>Año del Country Reports (Human Rights Practice)</label>
+        <input type="text" class="tab-anio-cc" placeholder="ej. 2025">
+      </div>
+      <div class="field">
+        <label>Año del OSAC Crime and Safety Report</label>
+        <input type="text" class="tab-anio-osac" placeholder="ej. 2025">
+      </div>
     </div>
   `;
   $("#tabsList").appendChild(div);
 
   const formOfIdentityCheck = div.querySelector('.cat-check[data-cat="form_of_identity"]');
+  const countryConditionsCheck = div.querySelector('.cat-check[data-cat="country_conditions"]');
   const paisField = div.querySelector(".pais-field");
-  formOfIdentityCheck.addEventListener("change", () => {
-    paisField.style.display = formOfIdentityCheck.checked ? "block" : "none";
-  });
+  const anioFields = div.querySelector(".anio-fields");
+  const actualizarCamposPais = () => {
+    paisField.style.display = formOfIdentityCheck.checked || countryConditionsCheck.checked ? "block" : "none";
+    anioFields.style.display = countryConditionsCheck.checked ? "grid" : "none";
+  };
+  formOfIdentityCheck.addEventListener("change", actualizarCamposPais);
+  countryConditionsCheck.addEventListener("change", actualizarCamposPais);
 }
 
 function nextLetterFromLastRow() {
@@ -232,8 +247,12 @@ function collectExhibits() {
     const categorias = [...card.querySelectorAll(".cat-check")]
       .filter((c) => c.checked)
       .map((c) => c.dataset.cat);
-    const pais = categorias.includes("form_of_identity") ? card.querySelector(".tab-pais").value.trim() : null;
-    return { letra, paginas, categorias, pais };
+    const necesitaPais = categorias.includes("form_of_identity") || categorias.includes("country_conditions");
+    const pais = necesitaPais ? card.querySelector(".tab-pais").value.trim() : null;
+    const necesitaAnios = categorias.includes("country_conditions");
+    const anio_cc = necesitaAnios ? card.querySelector(".tab-anio-cc").value.trim() : null;
+    const anio_osac = necesitaAnios ? card.querySelector(".tab-anio-osac").value.trim() : null;
+    return { letra, paginas, categorias, pais, anio_cc, anio_osac };
   });
 }
 
@@ -257,8 +276,12 @@ async function generarDocumento() {
       resultado.innerHTML = `<div class="status err">Cada Tab necesita letra, páginas y al menos una categoría seleccionada.</div>`;
       return;
     }
-    if (tg.categorias.includes("form_of_identity") && !tg.pais) {
-      resultado.innerHTML = `<div class="status err">Falta el país para el Tab ${tg.letra} (categoría "Form of Identity").</div>`;
+    if ((tg.categorias.includes("form_of_identity") || tg.categorias.includes("country_conditions")) && !tg.pais) {
+      resultado.innerHTML = `<div class="status err">Falta el país de origen del cliente para el Tab ${tg.letra}.</div>`;
+      return;
+    }
+    if (tg.categorias.includes("country_conditions") && (!tg.anio_cc || !tg.anio_osac)) {
+      resultado.innerHTML = `<div class="status err">Falta el año del Country Reports y/o del OSAC para el Tab ${tg.letra}.</div>`;
       return;
     }
   }
@@ -269,6 +292,7 @@ async function generarDocumento() {
     exhibits,
   };
   const separar_por_tab = $("#separarPorTab").checked;
+  const generar_pdf = $("#generarPdf").checked;
 
   btn.disabled = true;
   spinner.style.display = "inline-block";
@@ -276,7 +300,7 @@ async function generarDocumento() {
     const r = await api("/api/generar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ case_id: CURRENT_CASE_ID, document_instance, separar_por_tab }),
+      body: JSON.stringify({ case_id: CURRENT_CASE_ID, document_instance, separar_por_tab, generar_pdf }),
     });
 
     let html = "";
@@ -290,7 +314,7 @@ async function generarDocumento() {
       } else {
         html += `<div class="status err">El documento se generó pero no pasó la validación:\n${doc.validation_errors.join("\n")}</div>`;
       }
-      if (!doc.pdf_generado) {
+      if (generar_pdf && !doc.pdf_generado) {
         html += `<div class="status warn">No se pudo generar el PDF de verificación (revisa que LibreOffice esté instalado). El .docx sí se generó — ábrelo en Word y revísalo antes de usarlo.</div>`;
       }
       html += `<div class="result-links">
