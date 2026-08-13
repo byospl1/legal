@@ -1,8 +1,10 @@
 let CATALOGOS = null;
 let PLANTILLAS = [];
+let ITEMS_POR_CATEGORIA = {};
 let CURRENT_CASE_ID = null;
 let tabCounter = 0;
-let PAGINA_INICIAL_CASO = 1;
+
+const CATEGORIA_ORDEN = ["i589_application", "country_conditions", "form_of_identity", "supplemental_evidence", "fee"];
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -33,17 +35,13 @@ async function init() {
   const data = await api("/api/init");
   CATALOGOS = data.catalogos;
   PLANTILLAS = data.plantillas;
+  ITEMS_POR_CATEGORIA = data.items_por_categoria || {};
 
   fillDatalist("dlCorteSede", CATALOGOS.corte_sede);
   fillDatalist("dlJuez", CATALOGOS.juez);
   fillDatalist("dlPreparador", CATALOGOS.preparador);
   fillSelect("abogado", CATALOGOS.abogado, "— elegir —");
 
-  fillSelect(
-    "plantilla",
-    PLANTILLAS.map((p) => p.template_id),
-    null
-  );
   $("#plantilla").innerHTML = PLANTILLAS.map(
     (p) => `<option value="${p.template_id}">${escapeHtml(p.nombre)}</option>`
   ).join("");
@@ -106,9 +104,9 @@ async function loadCase(caseId) {
   $("#tabsList").innerHTML = "";
   try {
     const p = await api(`/api/casos/${caseId}/siguiente-pagina`);
-    PAGINA_INICIAL_CASO = p.siguiente_pagina;
+    $("#paginaInicialLote").value = p.siguiente_pagina;
   } catch {
-    PAGINA_INICIAL_CASO = 1;
+    $("#paginaInicialLote").value = 1;
   }
   await addTabRow();
 }
@@ -184,6 +182,7 @@ async function addTabRow() {
   const div = document.createElement("div");
   div.className = "tab-card";
   div.dataset.n = n;
+  div._evidencias = {}; // { itemKey: {evidencia_id, num_paginas, nombre} }
   div.innerHTML = `
     <div class="tab-head">
       <strong>Tab</strong>
@@ -198,11 +197,6 @@ async function addTabRow() {
         <label>Páginas (ej. 15-29)</label>
         <input type="text" class="tab-paginas" placeholder="1-12">
       </div>
-    </div>
-    <div class="field full" style="margin-top:10px;">
-      <label>Evidencia de este Tab (PDF) — se inserta después de la página "EXHIBIT {letra}" y se numera automáticamente</label>
-      <input type="file" class="tab-evidencia-input" accept="application/pdf">
-      <span class="muted tab-evidencia-status"></span>
     </div>
     <div class="categorias">
       ${CATEGORIA_KEYS.map((key) => {
@@ -228,6 +222,7 @@ async function addTabRow() {
         <input type="text" class="tab-anio-osac" placeholder="ej. 2025">
       </div>
     </div>
+    <div class="documentos-tab" style="margin-top:10px;"></div>
   `;
   $("#tabsList").appendChild(div);
 
@@ -235,57 +230,133 @@ async function addTabRow() {
   const countryConditionsCheck = div.querySelector('.cat-check[data-cat="country_conditions"]');
   const paisField = div.querySelector(".pais-field");
   const anioFields = div.querySelector(".anio-fields");
-  const actualizarCamposPais = () => {
+  const actualizarCampos = () => {
     paisField.style.display = formOfIdentityCheck.checked || countryConditionsCheck.checked ? "block" : "none";
     anioFields.style.display = countryConditionsCheck.checked ? "grid" : "none";
+    renderDocumentUploads(div);
   };
-  formOfIdentityCheck.addEventListener("change", actualizarCamposPais);
-  countryConditionsCheck.addEventListener("change", actualizarCamposPais);
+  for (const chk of div.querySelectorAll(".cat-check")) {
+    chk.addEventListener("change", actualizarCampos);
+  }
 
-  const evidenciaInput = div.querySelector(".tab-evidencia-input");
-  const evidenciaStatus = div.querySelector(".tab-evidencia-status");
-  evidenciaInput.addEventListener("change", async () => {
-    const file = evidenciaInput.files[0];
-    if (!file) {
-      delete div.dataset.evidenciaId;
-      delete div.dataset.numPaginas;
-      evidenciaStatus.textContent = "";
-      recalcularPaginas();
-      return;
-    }
-    evidenciaStatus.textContent = "Subiendo…";
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch("/api/evidencia", { method: "POST", body: formData });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Error al subir el archivo");
-      div.dataset.evidenciaId = data.evidencia_id;
-      div.dataset.numPaginas = data.num_paginas;
-      evidenciaStatus.textContent = `${data.num_paginas} página(s) detectadas.`;
-      recalcularPaginas();
-    } catch (e) {
-      evidenciaStatus.textContent = "Error: " + e.message;
-      evidenciaInput.value = "";
-      delete div.dataset.evidenciaId;
-      delete div.dataset.numPaginas;
-    }
-  });
-
+  renderDocumentUploads(div);
   recalcularPaginas();
 }
 
+function categoriasMarcadas(card) {
+  return [...card.querySelectorAll(".cat-check")].filter((c) => c.checked).map((c) => c.dataset.cat);
+}
+
+/** Reconstruye la lista de casillas "sube el PDF de este documento" según
+ * las categorías marcadas en el Tab — sin perder los archivos que ya
+ * estaban subidos si la categoría sigue marcada. */
+function renderDocumentUploads(card) {
+  const cont = card.querySelector(".documentos-tab");
+  const categorias = categoriasMarcadas(card);
+  const itemsActivos = [];
+  for (const cat of CATEGORIA_ORDEN) {
+    if (!categorias.includes(cat)) continue;
+    for (const item of ITEMS_POR_CATEGORIA[cat] || []) {
+      itemsActivos.push({ cat, ...item });
+    }
+  }
+
+  // quita del estado los ítems que ya no aplican (categoría desmarcada)
+  const keysActivos = new Set(itemsActivos.map((it) => it.key));
+  for (const key of Object.keys(card._evidencias)) {
+    if (!keysActivos.has(key)) delete card._evidencias[key];
+  }
+
+  if (itemsActivos.length === 0) {
+    cont.innerHTML = "";
+    return;
+  }
+
+  cont.innerHTML =
+    `<label style="font-size:13px; font-weight:600; color:var(--text-dim);">Documentos de evidencia de este Tab (PDF, opcional — se insertan después de "EXHIBIT {letra}" y se numeran solos)</label>` +
+    itemsActivos
+      .map(
+        (it) => `
+      <div class="field" style="margin-top:6px;">
+        <label style="font-weight:400;">${escapeHtml(it.label)}</label>
+        <input type="file" class="doc-upload-input" data-item-key="${it.key}" accept="application/pdf">
+        <span class="muted doc-upload-status" data-item-key="${it.key}"></span>
+      </div>`
+      )
+      .join("");
+
+  for (const input of cont.querySelectorAll(".doc-upload-input")) {
+    input.addEventListener("change", () => onDocumentUpload(card, input));
+  }
+}
+
+async function onDocumentUpload(card, input) {
+  const itemKey = input.dataset.itemKey;
+  const statusEl = card.querySelector(`.doc-upload-status[data-item-key="${itemKey}"]`);
+  const file = input.files[0];
+  if (!file) {
+    delete card._evidencias[itemKey];
+    statusEl.textContent = "";
+    recalcularPaginas();
+    return;
+  }
+  statusEl.textContent = "Subiendo…";
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("tipo", itemKey);
+    const res = await fetch("/api/evidencia", { method: "POST", body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Error al subir el archivo");
+    card._evidencias[itemKey] = { evidencia_id: data.evidencia_id, num_paginas: data.num_paginas };
+    statusEl.textContent = `${data.num_paginas} página(s).`;
+
+    if (itemKey === "country_reports" || itemKey === "osac") {
+      const paisInput = card.querySelector(".tab-pais");
+      const anioInput = card.querySelector(itemKey === "country_reports" ? ".tab-anio-cc" : ".tab-anio-osac");
+      if (data.pais_sugerido && paisInput && !paisInput.value) paisInput.value = data.pais_sugerido;
+      if (data.anio_sugerido && anioInput && !anioInput.value) anioInput.value = data.anio_sugerido;
+    }
+
+    recalcularPaginas();
+  } catch (e) {
+    statusEl.textContent = "Error: " + e.message;
+    input.value = "";
+    delete card._evidencias[itemKey];
+  }
+}
+
+/** Recalcula, en orden (Tab por Tab, categoría por categoría, documento por
+ * documento), la página de inicio de cada documento subido — encadenado
+ * desde la "página inicial de este lote" que confirma el usuario. Actualiza
+ * el campo "Páginas" de cada Tab (de solo lectura si tiene algún documento
+ * adjunto) y el texto de cada casilla de subida. */
 function recalcularPaginas() {
-  let pagina = PAGINA_INICIAL_CASO;
+  let pagina = parseInt($("#paginaInicialLote")?.value, 10) || 1;
   for (const card of document.querySelectorAll("#tabsList .tab-card")) {
     const paginasInput = card.querySelector(".tab-paginas");
-    const numPaginas = parseInt(card.dataset.numPaginas || "", 10);
-    if (card.dataset.evidenciaId && !isNaN(numPaginas) && numPaginas > 0) {
-      const inicio = pagina;
-      const fin = pagina + numPaginas - 1;
-      paginasInput.value = numPaginas === 1 ? String(inicio) : `${inicio}-${fin}`;
+    const categorias = categoriasMarcadas(card);
+    let inicioTab = null;
+    let huboDocumento = false;
+
+    for (const cat of CATEGORIA_ORDEN) {
+      if (!categorias.includes(cat)) continue;
+      for (const item of ITEMS_POR_CATEGORIA[cat] || []) {
+        const info = card._evidencias[item.key];
+        const statusEl = card.querySelector(`.doc-upload-status[data-item-key="${item.key}"]`);
+        if (!info) continue;
+        huboDocumento = true;
+        if (inicioTab === null) inicioTab = pagina;
+        const inicioDoc = pagina;
+        pagina += info.num_paginas;
+        if (statusEl) statusEl.textContent = `${info.num_paginas} página(s) — empieza en la página ${inicioDoc}.`;
+      }
+    }
+
+    if (huboDocumento) {
+      const finTab = pagina - 1;
+      paginasInput.value = inicioTab === finTab ? String(inicioTab) : `${inicioTab}-${finTab}`;
       paginasInput.readOnly = true;
-      pagina = fin + 1;
     } else {
       paginasInput.readOnly = false;
     }
@@ -305,16 +376,17 @@ function collectExhibits() {
   return cards.map((card) => {
     const letra = card.querySelector(".tab-letra").value.trim();
     const paginas = card.querySelector(".tab-paginas").value.trim();
-    const categorias = [...card.querySelectorAll(".cat-check")]
-      .filter((c) => c.checked)
-      .map((c) => c.dataset.cat);
+    const categorias = categoriasMarcadas(card);
     const necesitaPais = categorias.includes("form_of_identity") || categorias.includes("country_conditions");
     const pais = necesitaPais ? card.querySelector(".tab-pais").value.trim() : null;
     const necesitaAnios = categorias.includes("country_conditions");
     const anio_cc = necesitaAnios ? card.querySelector(".tab-anio-cc").value.trim() : null;
     const anio_osac = necesitaAnios ? card.querySelector(".tab-anio-osac").value.trim() : null;
-    const evidencia_id = card.dataset.evidenciaId || null;
-    return { letra, paginas, categorias, pais, anio_cc, anio_osac, evidencia_id };
+    const evidencias = {};
+    for (const [key, info] of Object.entries(card._evidencias || {})) {
+      evidencias[key] = info.evidencia_id;
+    }
+    return { letra, paginas, categorias, pais, anio_cc, anio_osac, evidencias };
   });
 }
 
@@ -353,9 +425,10 @@ async function generarDocumento() {
     titulo: $("#titulo").value,
     exhibits,
   };
-  const hayEvidencia = exhibits.some((tg) => tg.evidencia_id);
+  const hayEvidencia = exhibits.some((tg) => tg.evidencias && Object.keys(tg.evidencias).length > 0);
   const separar_por_tab = hayEvidencia ? true : $("#separarPorTab").checked;
   const generar_pdf = hayEvidencia ? true : $("#generarPdf").checked;
+  const pagina_inicial_lote = parseInt($("#paginaInicialLote").value, 10) || 1;
 
   btn.disabled = true;
   spinner.style.display = "inline-block";
@@ -363,7 +436,7 @@ async function generarDocumento() {
     const r = await api("/api/generar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ case_id: CURRENT_CASE_ID, document_instance, separar_por_tab, generar_pdf }),
+      body: JSON.stringify({ case_id: CURRENT_CASE_ID, document_instance, separar_por_tab, generar_pdf, pagina_inicial_lote }),
     });
 
     let html = "";
@@ -380,10 +453,11 @@ async function generarDocumento() {
       if (generar_pdf && !doc.pdf_generado) {
         html += `<div class="status warn">No se pudo generar el PDF (revisa que Word/LibreOffice estén disponibles). El .docx sí se generó — ábrelo y revísalo antes de usarlo.</div>`;
       }
-      if (doc.evidencia_fusionada) {
-        html += `<div class="status ok">Evidencia insertada y numerada dentro del PDF.</div>`;
-      } else if (doc.evidencia_error) {
-        html += `<div class="status err">No se pudo insertar la evidencia: ${escapeHtml(doc.evidencia_error)}</div>`;
+      if (doc.evidencia_fusionada && !doc.evidencia_error) {
+        html += `<div class="status ok">Evidencia insertada después de la divisoria y numerada dentro del PDF.</div>`;
+      }
+      if (doc.evidencia_error) {
+        html += `<div class="status err">${escapeHtml(doc.evidencia_error)}</div>`;
       }
       html += `<div class="result-links">
         <a href="${doc.docx_url}" download>Descargar .docx</a>
@@ -395,6 +469,8 @@ async function generarDocumento() {
       html += `</div>`;
     }
     resultado.innerHTML = html;
+
+    if (r.siguiente_pagina) $("#paginaInicialLote").value = r.siguiente_pagina;
 
     const data = await api("/api/init");
     renderSalidas(data.salidas);
@@ -414,4 +490,5 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#plantilla").addEventListener("change", onPlantillaChange);
   $("#btnAgregarTab").addEventListener("click", addTabRow);
   $("#btnGenerar").addEventListener("click", generarDocumento);
+  $("#paginaInicialLote").addEventListener("input", recalcularPaginas);
 });

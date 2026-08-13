@@ -18,8 +18,9 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 
 from motor.case_store import CASE_STORE_DIR, list_cases, load_case, next_tab_letra, save_case, siguiente_pagina
+from motor.exhibit_builder import CATEGORY_ORDER, ITEMS_POR_CATEGORIA
 from motor.fill_engine import FillEngineError, generar_lote
-from motor.pdf_merge import PdfMergeError, combinar_portada_y_evidencia, contar_paginas
+from motor.pdf_merge import PdfMergeError, combinar_portada_y_evidencia, contar_paginas, sugerir_anio, sugerir_pais
 from motor.validate import ValidationError
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -80,6 +81,7 @@ def api_init():
             "plantillas": _registro_plantillas()["plantillas"],
             "casos": list_cases(),
             "salidas": _list_salidas(),
+            "items_por_categoria": ITEMS_POR_CATEGORIA,
         }
     )
 
@@ -126,6 +128,11 @@ def api_subir_evidencia():
     if not archivo.filename.lower().endswith(".pdf"):
         return jsonify({"error": "El archivo de evidencia debe ser un PDF"}), 400
 
+    # "tipo" identifica de qué documento se trata (ej. "country_reports",
+    # "osac") — solo se usa para sugerir país/año por texto, es opcional.
+    tipo = request.form.get("tipo") or ""
+
+    EVIDENCIA_DIR.mkdir(parents=True, exist_ok=True)
     evidencia_id = uuid.uuid4().hex
     nombre_seguro = secure_filename(archivo.filename) or "evidencia.pdf"
     destino = EVIDENCIA_DIR / f"{evidencia_id}__{nombre_seguro}"
@@ -138,31 +145,64 @@ def api_subir_evidencia():
         return jsonify({"error": str(e)}), 400
 
     _EVIDENCIAS[evidencia_id] = {"path": destino, "num_paginas": num_paginas, "nombre": archivo.filename}
-    return jsonify({"evidencia_id": evidencia_id, "num_paginas": num_paginas, "nombre": archivo.filename})
+
+    respuesta = {"evidencia_id": evidencia_id, "num_paginas": num_paginas, "nombre": archivo.filename}
+    if tipo in ("country_reports", "osac"):
+        try:
+            respuesta["anio_sugerido"] = sugerir_anio(destino)
+            respuesta["pais_sugerido"] = sugerir_pais(destino)
+        except Exception:  # noqa: BLE001
+            # la sugerencia es "mejor esfuerzo" — si falla, simplemente no se
+            # sugiere nada, no debe tumbar la subida del archivo.
+            respuesta["anio_sugerido"] = None
+            respuesta["pais_sugerido"] = None
+
+    return jsonify(respuesta)
 
 
-def _resolver_paginas_evidencia(case: dict, exhibits: list[dict]) -> None:
-    """Calcula el rango de páginas de cada Tab con evidencia adjunta,
-    continuando el conteo del caso, y actualiza `case['siguiente_pagina']`.
-    Los Tabs sin evidencia conservan el valor de 'paginas' capturado a mano."""
-    pagina = siguiente_pagina(case)
+def _resolver_paginas_evidencia(pagina_inicial_lote: int, exhibits: list[dict]) -> int:
+    """Para cada Tab con documentos de evidencia adjuntos (uno o más,
+    identificados por el 'key' del ítem dentro de su categoría — ver
+    motor.exhibit_builder.ITEMS_POR_CATEGORIA), calcula la página de inicio
+    de cada documento en orden (categoría, luego ítem dentro de la
+    categoría), continuando desde `pagina_inicial_lote`. Sobrescribe
+    tg['paginas'] con el rango calculado y tg['evidencias'] con la
+    información ya resuelta (página de inicio + ruta) que necesita
+    exhibit_builder para anotar los subtítulos. Devuelve la próxima página
+    disponible después de este lote."""
+    pagina = pagina_inicial_lote
     for tg in exhibits:
-        evidencia_id = tg.get("evidencia_id")
-        if not evidencia_id:
+        evidencias_ids = tg.get("evidencias") or {}
+        if not evidencias_ids:
             continue
-        info = _EVIDENCIAS.get(evidencia_id)
-        if not info:
-            raise FillEngineError(
-                f"No se encontró el archivo de evidencia subido para el Tab {tg.get('letra', '?')} "
-                "— si reiniciaste el servidor después de subirlo, vuelve a subirlo e intenta de nuevo."
-            )
-        n = info["num_paginas"]
-        inicio = pagina
-        fin = pagina + n - 1
-        tg["paginas"] = str(inicio) if n == 1 else f"{inicio}-{fin}"
-        tg["_pagina_inicial_evidencia"] = inicio
-        pagina = fin + 1
-    case["siguiente_pagina"] = pagina
+        categorias = tg.get("categorias") or []
+        resueltas: dict[str, dict] = {}
+        inicio_tab = None
+        for categoria in CATEGORY_ORDER:
+            if categoria not in categorias:
+                continue
+            for item in ITEMS_POR_CATEGORIA.get(categoria, []):
+                evidencia_id = evidencias_ids.get(item["key"])
+                if not evidencia_id:
+                    continue
+                info = _EVIDENCIAS.get(evidencia_id)
+                if not info:
+                    raise FillEngineError(
+                        f"No se encontró el archivo subido para '{item['label']}' en el Tab "
+                        f"{tg.get('letra', '?')} — si reiniciaste el servidor después de subirlo, "
+                        "vuelve a subirlo e intenta de nuevo."
+                    )
+                n = info["num_paginas"]
+                inicio = pagina
+                if inicio_tab is None:
+                    inicio_tab = inicio
+                resueltas[item["key"]] = {"pagina_inicio": inicio, "num_paginas": n, "path": info["path"]}
+                pagina += n
+        if resueltas:
+            fin_tab = pagina - 1
+            tg["paginas"] = str(inicio_tab) if inicio_tab == fin_tab else f"{inicio_tab}-{fin_tab}"
+            tg["evidencias"] = resueltas
+    return pagina
 
 
 @app.post("/api/generar")
@@ -172,6 +212,7 @@ def api_generar():
     document_instance = body.get("document_instance")
     separar_por_tab = body.get("separar_por_tab", True)
     generar_pdf = body.get("generar_pdf", False)
+    pagina_inicial_lote = body.get("pagina_inicial_lote")
     if not case_id or not document_instance:
         return jsonify({"error": "Se requiere case_id y document_instance"}), 400
 
@@ -180,7 +221,7 @@ def api_generar():
         return jsonify({"error": "Caso no encontrado"}), 404
 
     exhibits = document_instance.get("exhibits") or []
-    tiene_evidencia = any(tg.get("evidencia_id") for tg in exhibits)
+    tiene_evidencia = any(tg.get("evidencias") for tg in exhibits)
     if tiene_evidencia:
         # insertar evidencia requiere un PDF de portada, y requiere que cada
         # Tab sea su propio archivo (no se puede "insertar después de la
@@ -188,10 +229,13 @@ def api_generar():
         # Tabs adentro).
         generar_pdf = True
         separar_por_tab = True
+        if not isinstance(pagina_inicial_lote, int) or pagina_inicial_lote < 1:
+            pagina_inicial_lote = siguiente_pagina(case)
         try:
-            _resolver_paginas_evidencia(case, exhibits)
+            nueva_siguiente = _resolver_paginas_evidencia(pagina_inicial_lote, exhibits)
         except FillEngineError as e:
             return jsonify({"error": str(e)}), 400
+        case["siguiente_pagina"] = nueva_siguiente
 
     try:
         resultados = generar_lote(
@@ -229,21 +273,23 @@ def api_generar():
             "evidencia_fusionada": False,
         }
 
-        if tab_group and tab_group.get("evidencia_id") and result.pdf_path:
-            info = _EVIDENCIAS.get(tab_group["evidencia_id"])
-            if info is None:
-                entry["evidencia_error"] = "No se encontró el archivo de evidencia subido."
-            else:
-                try:
-                    combinar_portada_y_evidencia(
-                        result.pdf_path,
-                        info["path"],
-                        tab_group["_pagina_inicial_evidencia"],
-                        result.pdf_path,
+        evidencias_resueltas = (tab_group or {}).get("evidencias")
+        if evidencias_resueltas and result.pdf_path:
+            rutas = [info["path"] for info in evidencias_resueltas.values()]
+            pagina_inicial_tab = min(info["pagina_inicio"] for info in evidencias_resueltas.values())
+            try:
+                _out, _ultima, punto_encontrado = combinar_portada_y_evidencia(
+                    result.pdf_path, rutas, pagina_inicial_tab, result.pdf_path
+                )
+                entry["evidencia_fusionada"] = True
+                if not punto_encontrado:
+                    entry["evidencia_error"] = (
+                        "No se encontró la página 'PROOF OF SERVICE' en el PDF generado — la evidencia "
+                        "quedó insertada al final del documento en vez de después de la divisoria. "
+                        "Revísalo antes de usarlo."
                     )
-                    entry["evidencia_fusionada"] = True
-                except PdfMergeError as e:
-                    entry["evidencia_error"] = str(e)
+            except PdfMergeError as e:
+                entry["evidencia_error"] = str(e)
 
         documentos.append(entry)
 

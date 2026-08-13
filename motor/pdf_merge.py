@@ -1,18 +1,21 @@
-"""Fusión de la portada del Tab (convertida a PDF) con el PDF de evidencia
-que se sube desde la interfaz web, más numeración automática de página al
-pie derecho de cada página de evidencia.
+"""Fusión de la portada del Tab (convertida a PDF) con el/los PDF(s) de
+evidencia que se suben desde la interfaz web, más numeración automática de
+página al pie derecho de cada página de evidencia.
 
-Flujo por Tab: [páginas de portada + tabla de exhibits + divisoria
-"EXHIBIT X" (ya vienen del .docx convertido a PDF)] + [páginas de
-evidencia subidas por el usuario, cada una estampada con su número de
-página, continuando la numeración desde donde se quedó el Tab anterior
-del mismo caso].
+Estructura del PDF de portada de un Tab (ya convertido desde el .docx):
+  [portada + tabla de exhibits] + [divisoria "EXHIBIT {letra}"] + [PROOF OF SERVICE]
+
+La evidencia va INSERTADA entre la divisoria y "PROOF OF SERVICE" — nunca
+al final del documento. El punto de inserción se localiza buscando el
+texto "PROOF OF SERVICE" en el PDF ya convertido (no se asume un número de
+página fijo, porque el número de páginas de la portada puede variar).
 """
 
 from __future__ import annotations
 
 import io
 import os
+import re
 import tempfile
 import time
 from pathlib import Path
@@ -65,50 +68,78 @@ def _replace_with_retry(tmp_path: Path, out_path: Path, attempts: int = 6) -> No
             delay = min(delay * 2, 3)
 
 
+def _localizar_punto_insercion(portada_reader: PdfReader) -> int:
+    """Índice de página (0-based) ANTES del cual debe insertarse la
+    evidencia: la primera página cuyo texto contiene "PROOF OF SERVICE".
+    Si no se encuentra (estructura inesperada de la plantilla), cae a
+    insertar al final — mejor que fallar, pero se reporta aparte."""
+    for i, page in enumerate(portada_reader.pages):
+        try:
+            texto = page.extract_text() or ""
+        except Exception:  # noqa: BLE001
+            texto = ""
+        if "PROOF OF SERVICE" in texto.upper():
+            return i
+    return len(portada_reader.pages)
+
+
 def combinar_portada_y_evidencia(
     portada_pdf: Path,
-    evidencia_pdf: Path | None,
+    evidencias: list[Path],
     pagina_inicial: int,
     out_path: Path,
-) -> tuple[Path, int]:
-    """Devuelve (ruta_del_pdf_final, última_página_usada).
+) -> tuple[Path, int, bool]:
+    """Devuelve (ruta_del_pdf_final, última_página_usada, punto_encontrado).
 
-    Si no hay evidencia, simplemente copia la portada tal cual y la última
-    página usada es `pagina_inicial - 1` (no consume numeración).
+    `evidencias` es una lista de PDFs (uno por documento/ítem con archivo
+    adjunto), insertados en ese orden, numerados de forma continua desde
+    `pagina_inicial`, justo después de la divisoria "EXHIBIT {letra}" y
+    antes de "PROOF OF SERVICE".
+
+    Si `evidencias` está vacío, copia la portada tal cual.
+
+    `punto_encontrado` es False si no se pudo ubicar "PROOF OF SERVICE" en
+    el PDF de portada — en ese caso la evidencia quedó al final como
+    respaldo, y quien llame debe avisarlo.
 
     Escribe primero a un archivo temporal y al final hace un reemplazo
     atómico sobre `out_path` — necesario porque `out_path` puede ser el
-    mismo archivo que `portada_pdf` (se sobreescribe la portada "sola" con
-    la versión final ya con evidencia incluida).
+    mismo archivo que `portada_pdf`.
     """
     writer = PdfWriter()
-    evidencia_reader = None
+    lectores_evidencia: list[PdfReader] = []
 
     try:
         portada_reader = PdfReader(str(portada_pdf))
-        for page in portada_reader.pages:
-            writer.add_page(page)
+        paginas_portada = list(portada_reader.pages)
     except Exception as e:  # noqa: BLE001
         raise PdfMergeError(f"No se pudo leer la portada generada '{Path(portada_pdf).name}': {e}")
 
-    ultima_pagina = pagina_inicial - 1
+    punto = _localizar_punto_insercion(portada_reader)
+    punto_encontrado = punto < len(paginas_portada)
 
-    if evidencia_pdf is not None:
+    for page in paginas_portada[:punto]:
+        writer.add_page(page)
+
+    ultima_pagina = pagina_inicial - 1
+    numero = pagina_inicial
+    for evidencia_pdf in evidencias:
         try:
-            evidencia_reader = PdfReader(str(evidencia_pdf))
-            paginas_evidencia = list(evidencia_reader.pages)
+            reader = PdfReader(str(evidencia_pdf))
+            lectores_evidencia.append(reader)
         except Exception as e:  # noqa: BLE001
             raise PdfMergeError(f"No se pudo leer el PDF de evidencia '{Path(evidencia_pdf).name}': {e}")
-
-        numero = pagina_inicial
-        for page in paginas_evidencia:
+        for page in reader.pages:
             width = float(page.mediabox.width)
             height = float(page.mediabox.height)
             overlay = _pagina_numero_overlay(width, height, numero)
             page.merge_page(overlay)
             writer.add_page(page)
             numero += 1
-        ultima_pagina = numero - 1
+    ultima_pagina = numero - 1
+
+    for page in paginas_portada[punto:]:
+        writer.add_page(page)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=out_path.name + ".", suffix=".tmp", dir=out_path.parent)
@@ -119,15 +150,58 @@ def combinar_portada_y_evidencia(
         # libera el handle de lectura de los PDF fuente antes de reemplazar
         # out_path — si out_path es el mismo archivo que portada_pdf (caso
         # normal), Windows no deja reemplazar un archivo que sigue abierto.
-        for reader in (portada_reader, evidencia_reader):
-            if reader is not None:
-                try:
-                    reader.stream.close()
-                except Exception:  # noqa: BLE001
-                    pass
+        for reader in (portada_reader, *lectores_evidencia):
+            try:
+                reader.stream.close()
+            except Exception:  # noqa: BLE001
+                pass
         _replace_with_retry(tmp_path, out_path)
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
 
-    return out_path, ultima_pagina
+    return out_path, ultima_pagina, punto_encontrado
+
+
+# ---------------------------------------------------------------------------
+# Detección heurística de país/año a partir del texto del PDF de evidencia
+# (sugerencia editable — nunca se usa a ciegas sin que el usuario la vea).
+# ---------------------------------------------------------------------------
+
+_ANIO_RE = re.compile(r"\b(19[9]\d|20[0-3]\d)\b")
+
+
+def _extraer_texto_primeras_paginas(pdf_path: Path, max_paginas: int = 2) -> str:
+    try:
+        reader = PdfReader(str(pdf_path))
+    except Exception:  # noqa: BLE001
+        return ""
+    texto = []
+    for page in reader.pages[:max_paginas]:
+        try:
+            texto.append(page.extract_text() or "")
+        except Exception:  # noqa: BLE001
+            continue
+    return "\n".join(texto)
+
+
+def sugerir_anio(pdf_path: Path) -> str | None:
+    texto = _extraer_texto_primeras_paginas(pdf_path)
+    m = _ANIO_RE.search(texto)
+    return m.group(0) if m else None
+
+
+def sugerir_pais(pdf_path: Path) -> str | None:
+    from motor.paises import LISTA_PAISES
+
+    texto = _extraer_texto_primeras_paginas(pdf_path)
+    if not texto:
+        return None
+    texto_low = texto.lower()
+    mejor = None
+    for pais in LISTA_PAISES:
+        patron = r"\b" + re.escape(pais.lower()) + r"\b"
+        if re.search(patron, texto_low):
+            if mejor is None or len(pais) > len(mejor):
+                mejor = pais
+    return mejor

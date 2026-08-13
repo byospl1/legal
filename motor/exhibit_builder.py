@@ -10,6 +10,12 @@ original (ver plantillas/i589-tab-cover/fragments/), siguiendo las secciones
 - Página divisoria = 3 piezas exactas del original, una unidad completa por
   Tab: párrafo con salto de página, 12 párrafos vacíos estilo Title (truco
   de centrado vertical), párrafo del título "EXHIBIT {letra}".
+
+Cada categoría puede traer más de un documento de evidencia (ej. Country
+Conditions = reporte de país + reporte OSAC, cada uno su propio PDF). Cuando
+un Tab tiene más de un documento adjunto en total, cada ítem con archivo
+muestra su propia página de inicio en el texto ("..., Pg. 13,") — así queda
+claro dónde empieza cada documento dentro del rango de páginas del Tab.
 """
 
 from __future__ import annotations
@@ -28,6 +34,31 @@ CATEGORY_FRAGMENTS: dict[str, list[str]] = {
 }
 
 CATEGORY_ORDER = ["i589_application", "country_conditions", "form_of_identity", "supplemental_evidence", "fee"]
+
+# Cada categoría puede tener uno o más "documentos" independientes que se
+# pueden subir por separado. `frag_index` es la posición dentro de
+# CATEGORY_FRAGMENTS[categoria] cuyo texto se anota con "Pg. N" cuando hay
+# más de un documento en el Tab. El orden de esta lista es también el orden
+# en el que se concatenan los PDFs subidos dentro de la categoría.
+ITEMS_POR_CATEGORIA: dict[str, list[dict]] = {
+    "i589_application": [
+        {"key": "aplicacion", "label": "I-589 Application", "frag_index": 0},
+    ],
+    "country_conditions": [
+        {"key": "country_reports", "label": "Country Reports on Human Rights Practice", "frag_index": 1},
+        {"key": "osac", "label": "OSAC Crime and Safety Report", "frag_index": 2},
+    ],
+    "form_of_identity": [
+        {"key": "pasaporte", "label": "Pasaporte del cliente", "frag_index": 1},
+    ],
+    "supplemental_evidence": [
+        {"key": "declaracion", "label": "Declaración + traducción", "frag_index": 1},
+    ],
+    "fee": [
+        {"key": "fee_receipt", "label": "Fee Receipt", "frag_index": 1},
+        {"key": "fbi_fingerprint", "label": "FBI Fingerprint", "frag_index": 2},
+    ],
+}
 
 
 def _load(name: str) -> str:
@@ -57,7 +88,30 @@ def _replace_in_first_t(xml: str, old: str, new: str) -> str:
     )
 
 
-def _build_category_xml(categoria: str, pais: str | None, anio_cc: str | None, anio_osac: str | None) -> str:
+def _append_pagina_ref(xml: str, numero: int) -> str:
+    """Agrega ' Pg. {numero}' al final del texto del fragmento, antes de la
+    puntuación final (coma o punto) si la trae."""
+
+    def repl(m: re.Match) -> str:
+        prefix, text, suffix = m.group(1), m.group(2), m.group(3)
+        stripped = text.rstrip()
+        if stripped.endswith(",") or stripped.endswith("."):
+            nuevo = stripped[:-1] + f", Pg. {numero}" + stripped[-1]
+        else:
+            nuevo = stripped + f", Pg. {numero}"
+        return prefix + nuevo + suffix
+
+    return re.sub(r"(<w:t[^>]*>)([^<]*)(</w:t>)", repl, xml, count=1)
+
+
+def _build_category_xml(
+    categoria: str,
+    pais: str | None,
+    anio_cc: str | None,
+    anio_osac: str | None,
+    evidencias: dict | None,
+    anotar_paginas: bool,
+) -> str:
     frag_names = CATEGORY_FRAGMENTS[categoria]
     parts = [_load(n) for n in frag_names]
     if categoria == "form_of_identity":
@@ -79,20 +133,34 @@ def _build_category_xml(categoria: str, pais: str | None, anio_cc: str | None, a
         parts[1] = _replace_in_first_t(parts[1], "Practice,", f"Practice, {_xml_escape(anio_cc)},")
         # "ii. OSAC Crime and Safety Reports," -> "...Reports, {AÑO},"
         parts[2] = _replace_in_first_t(parts[2], "Reports,", f"Reports, {_xml_escape(anio_osac)},")
+
+    if anotar_paginas and evidencias:
+        for item in ITEMS_POR_CATEGORIA.get(categoria, []):
+            info = evidencias.get(item["key"])
+            if info and info.get("pagina_inicio"):
+                idx = item["frag_index"]
+                parts[idx] = _append_pagina_ref(parts[idx], info["pagina_inicio"])
+
     return "".join(parts)
 
 
 def build_description_cell_content(
-    categorias: list[str], pais: str | None, anio_cc: str | None = None, anio_osac: str | None = None
+    categorias: list[str],
+    pais: str | None,
+    anio_cc: str | None = None,
+    anio_osac: str | None = None,
+    evidencias: dict | None = None,
 ) -> str:
     spacer = _load("spacer")
     ordered = [c for c in CATEGORY_ORDER if c in categorias]
-    blocks = [_build_category_xml(c, pais, anio_cc, anio_osac) for c in ordered]
+    anotar_paginas = bool(evidencias) and len(evidencias) > 1
+    blocks = [_build_category_xml(c, pais, anio_cc, anio_osac, evidencias, anotar_paginas) for c in ordered]
     return spacer.join(blocks)
 
 
 def build_exhibit_table(tab_groups: list[dict]) -> str:
-    """tab_groups: [{letra, paginas, categorias: [...], pais: str|None}, ...]"""
+    """tab_groups: [{letra, paginas, categorias: [...], pais, anio_cc,
+    anio_osac, evidencias: {item_key: {"pagina_inicio": N}, ...}}, ...]"""
     tbl_open = _load("tbl_open")
     tab_header = _load("tab_header_label")
     desc_header = _load("description_header_label")
@@ -113,7 +181,9 @@ def build_exhibit_table(tab_groups: list[dict]) -> str:
     for tg in tab_groups:
         letra_xml = _set_first_t_text(tab_value_tpl, tg["letra"])
         pages_xml = _set_first_t_text(pages_value_tpl, f"Pgs. {tg['paginas']}")
-        desc_xml = build_description_cell_content(tg["categorias"], tg.get("pais"), tg.get("anio_cc"), tg.get("anio_osac"))
+        desc_xml = build_description_cell_content(
+            tg["categorias"], tg.get("pais"), tg.get("anio_cc"), tg.get("anio_osac"), tg.get("evidencias")
+        )
         row = (
             "<w:tr>"
             f"<w:tc><w:tcPr><w:tcW w:w=\"1265\" w:type=\"dxa\"/></w:tcPr>{letra_xml}</w:tc>"
