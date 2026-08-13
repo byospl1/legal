@@ -20,9 +20,7 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 from motor.analyze_template import Sdt, extract_top_level_sdts
@@ -48,6 +46,30 @@ class FillResult:
 
 def _xml_escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _sanitize_filename_part(text: str) -> str:
+    text = re.sub(r'[\\/:*?"<>|]', "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _tipo_tab_label(document_instance: dict) -> str:
+    exhibits = document_instance.get("exhibits") or []
+    if exhibits:
+        letras = "-".join(tg["letra"] for tg in exhibits)
+        return f"Tab{letras}"
+    return document_instance["template_id"]
+
+
+def _unique_output_path(output_dir: Path, base_name: str, suffix: str = ".docx") -> Path:
+    """Nunca sobrescribe: si el nombre ya existe, agrega (2), (3)... en vez
+    de pisar un archivo que el usuario pueda tener abierto."""
+    candidate = output_dir / f"{base_name}{suffix}"
+    n = 2
+    while candidate.exists():
+        candidate = output_dir / f"{base_name} ({n}){suffix}"
+        n += 1
+    return candidate
 
 
 def _sdtpr_run_props(prefix_xml: str) -> str:
@@ -260,12 +282,14 @@ def generar_documento(
         )
         content_types_path.write_text(ct, encoding="utf-8")
 
-        # incluye hora (no solo fecha) para que dos corridas del mismo caso el
-        # mismo día nunca apunten al mismo archivo — en Windows, sobrescribir
-        # un archivo que sigue abierto en Word falla con "Access is denied".
-        marca_tiempo = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        out_name = f"{case['id']}__{template_id}__{marca_tiempo}.docx"
-        docx_out = output_dir / out_name
+        cliente = _sanitize_filename_part(case["cliente_nombre"])
+        a_num = _sanitize_filename_part(case["a_number"]).replace(" ", "")
+        tipo = _sanitize_filename_part(_tipo_tab_label(document_instance))
+        base_name = f"{cliente}_{a_num}_{tipo}"
+        # nunca sobrescribe una corrida anterior (ver _unique_output_path) —
+        # en Windows, sobrescribir un archivo que sigue abierto en Word
+        # falla además con "Access is denied".
+        docx_out = _unique_output_path(output_dir, base_name)
         rezip(tmp_path, docx_out)
 
     ok, errors = validate_docx(docx_out)
@@ -296,3 +320,33 @@ def generar_documento(
         validation_ok=ok,
         validation_errors=errors,
     )
+
+
+def generar_lote(
+    case: dict,
+    document_instance: dict,
+    plantillas_dir: Path | str = BASE_DIR / "plantillas",
+    output_dir: Path | str = BASE_DIR / "output",
+    verificar_pdf: bool = True,
+    separar_por_tab: bool = True,
+) -> list[FillResult]:
+    """Genera uno o varios documentos a partir de la misma captura.
+
+    Si `separar_por_tab` es True y hay más de un Tab en `document_instance
+    ["exhibits"]`, genera UN ARCHIVO POR TAB (cada uno con su propia fila en
+    la tabla de exhibits y su propia página divisoria) en vez de un solo
+    documento combinado — útil cuando de una corrida salen varios Tabs
+    distintos (A, B, C...) y cada uno necesita imprimirse/archivarse por
+    separado. Si `separar_por_tab` es False, o solo hay un Tab (o ninguno),
+    genera un único documento con todos los Tabs juntos, como antes.
+    """
+    exhibits = document_instance.get("exhibits") or []
+    if not separar_por_tab or len(exhibits) <= 1:
+        return [generar_documento(case, document_instance, plantillas_dir, output_dir, verificar_pdf)]
+
+    resultados = []
+    for tab_group in exhibits:
+        instancia_tab = dict(document_instance)
+        instancia_tab["exhibits"] = [tab_group]
+        resultados.append(generar_documento(case, instancia_tab, plantillas_dir, output_dir, verificar_pdf))
+    return resultados

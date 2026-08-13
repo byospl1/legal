@@ -268,6 +268,7 @@ async function generarDocumento() {
     titulo: $("#titulo").value,
     exhibits,
   };
+  const separar_por_tab = $("#separarPorTab").checked;
 
   btn.disabled = true;
   spinner.style.display = "inline-block";
@@ -275,24 +276,31 @@ async function generarDocumento() {
     const r = await api("/api/generar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ case_id: CURRENT_CASE_ID, document_instance }),
+      body: JSON.stringify({ case_id: CURRENT_CASE_ID, document_instance, separar_por_tab }),
     });
 
     let html = "";
-    if (r.validation_ok) {
-      html += `<div class="status ok">Documento generado y validado correctamente.</div>`;
-    } else {
-      html += `<div class="status err">El documento se generó pero no pasó la validación:\n${r.validation_errors.join("\n")}</div>`;
+    if (r.documentos.length > 1) {
+      html += `<div class="status ok">${r.documentos.length} documentos generados (uno por Tab).</div>`;
     }
-    if (!r.pdf_generado) {
-      html += `<div class="status warn">No se pudo generar el PDF de verificación (revisa que LibreOffice esté instalado). El .docx sí se generó — ábrelo en Word y revísalo antes de usarlo.</div>`;
-    }
-    html += `<div class="result-links">
-      <a href="${r.docx_url}" download>Descargar .docx</a>
-      ${r.pdf_url ? `<a href="${r.pdf_url}" target="_blank">Ver PDF</a>` : ""}
-    </div>`;
-    if (r.preview_urls && r.preview_urls.length) {
-      html += `<div class="previews">` + r.preview_urls.map((u) => `<a href="${u}" target="_blank"><img src="${u}"></a>`).join("") + `</div>`;
+    for (const doc of r.documentos) {
+      html += `<div class="tab-card">`;
+      if (doc.validation_ok) {
+        html += `<div class="status ok">Documento generado y validado correctamente.</div>`;
+      } else {
+        html += `<div class="status err">El documento se generó pero no pasó la validación:\n${doc.validation_errors.join("\n")}</div>`;
+      }
+      if (!doc.pdf_generado) {
+        html += `<div class="status warn">No se pudo generar el PDF de verificación (revisa que LibreOffice esté instalado). El .docx sí se generó — ábrelo en Word y revísalo antes de usarlo.</div>`;
+      }
+      html += `<div class="result-links">
+        <a href="${doc.docx_url}" download>Descargar .docx</a>
+        ${doc.pdf_url ? `<a href="${doc.pdf_url}" target="_blank">Ver PDF</a>` : ""}
+      </div>`;
+      if (doc.preview_urls && doc.preview_urls.length) {
+        html += `<div class="previews">` + doc.preview_urls.map((u) => `<a href="${u}" target="_blank"><img src="${u}"></a>`).join("") + `</div>`;
+      }
+      html += `</div>`;
     }
     resultado.innerHTML = html;
 

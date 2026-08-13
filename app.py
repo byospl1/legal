@@ -16,7 +16,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_file, send_from_directory
 
 from motor.case_store import CASE_STORE_DIR, list_cases, load_case, next_tab_letra, save_case
-from motor.fill_engine import FillEngineError, generar_documento
+from motor.fill_engine import FillEngineError, generar_lote
 from motor.validate import ValidationError
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -106,6 +106,7 @@ def api_generar():
     body = request.get_json(force=True)
     case_id = body.get("case_id")
     document_instance = body.get("document_instance")
+    separar_por_tab = body.get("separar_por_tab", True)
     if not case_id or not document_instance:
         return jsonify({"error": "Se requiere case_id y document_instance"}), 400
 
@@ -114,7 +115,13 @@ def api_generar():
         return jsonify({"error": "Caso no encontrado"}), 404
 
     try:
-        result = generar_documento(case, document_instance, plantillas_dir=PLANTILLAS_DIR, output_dir=OUTPUT_DIR)
+        resultados = generar_lote(
+            case,
+            document_instance,
+            plantillas_dir=PLANTILLAS_DIR,
+            output_dir=OUTPUT_DIR,
+            separar_por_tab=separar_por_tab,
+        )
     except (FillEngineError, ValidationError) as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:  # noqa: BLE001
@@ -126,20 +133,21 @@ def api_generar():
         case["ultimo_tab_letra"] = exhibits[-1]["letra"]
         save_case(case)
 
-    preview_urls = [
-        f"/output/_preview/{result.docx_path.stem}/{p.name}" for p in result.preview_images
-    ]
+    documentos = []
+    for result in resultados:
+        preview_urls = [f"/output/_preview/{result.docx_path.stem}/{p.name}" for p in result.preview_images]
+        documentos.append(
+            {
+                "docx_url": f"/output/{result.docx_path.name}",
+                "pdf_url": f"/output/{result.pdf_path.name}" if result.pdf_path else None,
+                "preview_urls": preview_urls,
+                "validation_ok": result.validation_ok,
+                "validation_errors": result.validation_errors,
+                "pdf_generado": result.pdf_path is not None,
+            }
+        )
 
-    return jsonify(
-        {
-            "docx_url": f"/output/{result.docx_path.name}",
-            "pdf_url": f"/output/{result.pdf_path.name}" if result.pdf_path else None,
-            "preview_urls": preview_urls,
-            "validation_ok": result.validation_ok,
-            "validation_errors": result.validation_errors,
-            "pdf_generado": result.pdf_path is not None,
-        }
-    )
+    return jsonify({"documentos": documentos})
 
 
 @app.get("/output/<path:filename>")
