@@ -88,12 +88,46 @@ def _find_pdftoppm() -> str:
 def convert_to_pdf(docx_path: Path, out_dir: Path) -> Path:
     soffice = _find_soffice()
     out_dir.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(
-        [soffice, "--headless", "--norestore", "--convert-to", "pdf", "--outdir", str(out_dir), str(docx_path)],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+
+    # Usa un perfil de usuario de LibreOffice aislado y temporal en cada
+    # conversión. Sin esto, si ya hay otra ventana/instancia de LibreOffice
+    # abierta en la computadora (incluso minimizada, o solo el ícono en la
+    # bandeja del sistema), soffice --headless intenta hablar con esa
+    # instancia compartida y puede quedarse esperando indefinidamente en
+    # vez de convertir y salir.
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="loprofile_") as profile_dir:
+        profile_uri = Path(profile_dir).as_uri()
+        try:
+            result = subprocess.run(
+                [
+                    soffice,
+                    "--headless",
+                    "--norestore",
+                    "--nolockcheck",
+                    "--nodefault",
+                    "--nofirststartwizard",
+                    f"-env:UserInstallation={profile_uri}",
+                    "--convert-to",
+                    "pdf",
+                    "--outdir",
+                    str(out_dir),
+                    str(docx_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=90,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise PdfToolsError(
+                "La conversión a PDF tardó más de 90 segundos y se canceló. Esto casi "
+                "siempre pasa porque hay otra ventana de LibreOffice abierta en la "
+                "computadora (revisa también el ícono de LibreOffice junto al reloj, "
+                "en la bandeja del sistema, y ciérralo) — ciérrala e intenta de nuevo. "
+                f"Detalle: {e}"
+            )
+
     pdf_path = out_dir / (docx_path.stem + ".pdf")
     if result.returncode != 0 or not pdf_path.exists():
         raise PdfToolsError(f"Fallo al convertir a PDF: {result.stdout}\n{result.stderr}")
@@ -104,11 +138,15 @@ def rasterize(pdf_path: Path, out_dir: Path, dpi: int = 100) -> list[Path]:
     pdftoppm = _find_pdftoppm()
     out_dir.mkdir(parents=True, exist_ok=True)
     prefix = out_dir / pdf_path.stem
-    subprocess.run(
-        [pdftoppm, "-jpeg", "-r", str(dpi), str(pdf_path), str(prefix)],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=120,
-    )
+    try:
+        result = subprocess.run(
+            [pdftoppm, "-jpeg", "-r", str(dpi), str(pdf_path), str(prefix)],
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise PdfToolsError(f"pdftoppm tardó más de 90 segundos y se canceló. Detalle: {e}")
+    if result.returncode != 0:
+        raise PdfToolsError(f"Fallo al generar las imágenes de verificación: {result.stdout}\n{result.stderr}")
     return sorted(out_dir.glob(f"{pdf_path.stem}-*.jpg"))
