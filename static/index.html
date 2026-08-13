@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sistema de llenado de Tabs — EOIR</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --border: #d9dce1;
+    --text: #1f2430;
+    --text-dim: #5c6270;
+    --accent: #7a2e2e;
+    --accent-dark: #5c2222;
+    --accent-bg: #fbeeee;
+    --ok: #2f7a4f;
+    --ok-bg: #eaf7ef;
+    --err: #b3261e;
+    --err-bg: #fdecea;
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.4;
+  }
+  header {
+    background: var(--accent);
+    color: #fff;
+    padding: 18px 28px;
+  }
+  header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+  header p { margin: 4px 0 0; font-size: 13px; opacity: 0.85; }
+  main {
+    max-width: 980px;
+    margin: 24px auto 80px;
+    padding: 0 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+  }
+  .panel h2 {
+    margin: 0 0 4px;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .panel .subtitle { color: var(--text-dim); font-size: 13px; margin: 0 0 16px; }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 20px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field.full { grid-column: 1 / -1; }
+  label { font-size: 13px; font-weight: 600; color: var(--text-dim); }
+  input[type=text], input[type=search], select, textarea {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: inherit;
+    background: #fff;
+    color: var(--text);
+  }
+  textarea { resize: vertical; min-height: 44px; }
+  input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-bg);
+  }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  button {
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--text);
+    padding: 9px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    transition: background .12s;
+  }
+  button:hover { background: #f0f1f3; }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  button.primary:hover { background: var(--accent-dark); }
+  button.danger { color: var(--err); border-color: var(--err); background: #fff; }
+  button.danger:hover { background: var(--err-bg); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .tab-card {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+    background: #fafbfc;
+  }
+  .tab-card .tab-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .tab-card .tab-head strong { font-size: 14px; }
+  .categorias { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+  .categoria-opt { display: flex; align-items: flex-start; gap: 8px; font-size: 13.5px; }
+  .categoria-opt input[type=checkbox] { margin-top: 3px; }
+  .categoria-opt .etiqueta-dim { color: var(--text-dim); font-size: 12px; display: block; }
+  .pais-field { margin-top: 6px; margin-left: 24px; max-width: 260px; }
+  select[multiple] { min-height: 90px; }
+  .status { padding: 10px 14px; border-radius: 6px; font-size: 13.5px; margin-top: 12px; }
+  .status.ok { background: var(--ok-bg); color: var(--ok); border: 1px solid #bfe3cc; }
+  .status.err { background: var(--err-bg); color: var(--err); border: 1px solid #f3c3c0; white-space: pre-wrap; }
+  .status.warn { background: #fff8e6; color: #8a6100; border: 1px solid #f0dca0; }
+  .result-links { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  .result-links a {
+    display: inline-block;
+    padding: 8px 14px;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    text-decoration: none;
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+  .previews { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  .previews img { width: 150px; border: 1px solid var(--border); border-radius: 4px; }
+  table.salidas { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.salidas th, table.salidas td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  table.salidas a { color: var(--accent); font-weight: 600; text-decoration: none; }
+  table.salidas a:hover { text-decoration: underline; }
+  .muted { color: var(--text-dim); font-size: 13px; }
+  .spinner {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,0.5); border-top-color: #fff;
+    border-radius: 50%; animation: spin .7s linear infinite; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Sistema de llenado de Tabs — EOIR</h1>
+  <p>Kostiv Cardinal International Law Group Corp. · portadas de expediente (I-589)</p>
+</header>
+
+<main>
+
+  <section class="panel">
+    <h2><span class="badge">1</span> Caso</h2>
+    <p class="subtitle">Selecciona un caso existente o captura uno nuevo. Estos datos se reutilizan en todos los Tabs del cliente.</p>
+
+    <div class="row" style="margin-bottom:14px;">
+      <div class="field" style="min-width:260px;">
+        <label>Caso existente</label>
+        <select id="selCaso">
+          <option value="">— Nuevo caso —</option>
+        </select>
+      </div>
+      <button id="btnNuevoCaso" type="button">Nuevo caso</button>
+    </div>
+
+    <div class="grid">
+      <div class="field">
+        <label>Nombre del cliente</label>
+        <input type="text" id="cliente_nombre" placeholder="APELLIDO, Nombre">
+      </div>
+      <div class="field">
+        <label>A#</label>
+        <input type="text" id="a_number" placeholder="A 000-000-000">
+      </div>
+      <div class="field">
+        <label>Corte / sede</label>
+        <input type="text" id="corte_sede" list="dlCorteSede" placeholder="ej. SANTA ANA, CA">
+        <datalist id="dlCorteSede"></datalist>
+      </div>
+      <div class="field">
+        <label>Juez</label>
+        <input type="text" id="juez" list="dlJuez" placeholder="Apellido, Nombre">
+        <datalist id="dlJuez"></datalist>
+      </div>
+      <div class="field full">
+        <label>Próxima audiencia (fecha, hora, tipo y modalidad — tal como aparece en el portal EOIR)</label>
+        <input type="text" id="proxima_audiencia" placeholder="ej. September 10, 2026, 9:00 AM, Master Calendar Hearing, In Person">
+      </div>
+      <div class="field">
+        <label>Abogado</label>
+        <select id="abogado"></select>
+      </div>
+      <div class="field">
+        <label>Preparador</label>
+        <input type="text" id="preparador" list="dlPreparador">
+        <datalist id="dlPreparador"></datalist>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:16px;">
+      <button class="primary" id="btnGuardarCaso" type="button">Guardar caso</button>
+      <span id="casoStatus" class="muted"></span>
+    </div>
+  </section>
+
+  <section class="panel" id="panelDocumento" style="display:none;">
+    <h2><span class="badge">2</span> Generar documento</h2>
+    <p class="subtitle">Elige la plantilla, el título del documento y — si aplica — los Tabs de exhibits a incluir en esta corrida.</p>
+
+    <div class="grid">
+      <div class="field">
+        <label>Plantilla</label>
+        <select id="plantilla"></select>
+      </div>
+      <div class="field">
+        <label>Título del documento</label>
+        <select id="titulo"></select>
+      </div>
+    </div>
+
+    <div id="exhibitsSection" style="margin-top:18px;">
+      <div class="row" style="justify-content:space-between;">
+        <strong style="font-size:14px;">Tabs de exhibits</strong>
+        <button type="button" id="btnAgregarTab">+ Agregar Tab</button>
+      </div>
+      <div id="tabsList" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="row" style="margin-top:18px;">
+      <button class="primary" id="btnGenerar" type="button">Generar documento</button>
+      <span id="generarSpinner" style="display:none;"><span class="spinner"></span>Generando y verificando…</span>
+    </div>
+
+    <div id="resultado"></div>
+  </section>
+
+  <section class="panel">
+    <h2><span class="badge">3</span> Documentos generados</h2>
+    <p class="subtitle">Historial de corridas — la carpeta <code>output/</code>.</p>
+    <table class="salidas" id="tablaSalidas">
+      <thead><tr><th>Documento</th><th>PDF</th><th>Verificación visual</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="muted" id="sinSalidas" style="display:none;">Todavía no se ha generado ningún documento.</p>
+  </section>
+
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

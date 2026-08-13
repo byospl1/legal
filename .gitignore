@@ -1,0 +1,12 @@
+venv/
+__pycache__/
+*.pyc
+
+# datos de clientes: no se suben al repositorio
+case_store/*.json
+input/*
+output/*
+!input/.gitkeep
+!output/.gitkeep
+
+.DS_Store

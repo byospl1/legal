@@ -1,0 +1,11 @@
+{
+  "plantillas": [
+    {
+      "template_id": "i589-tab-cover",
+      "nombre": "Portada de Tab — I-589 (Asilo)",
+      "archivo": "i589-tab-cover/00_TABS_TEAM_4.dotx",
+      "field_map": "i589-tab-cover/field_map.json",
+      "tiene_tabla_exhibits": true
+    }
+  ]
+}
