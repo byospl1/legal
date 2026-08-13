@@ -22,7 +22,7 @@ import json
 import re
 import shutil
 from dataclasses import dataclass
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 
 from motor.analyze_template import Sdt, extract_top_level_sdts
@@ -260,8 +260,11 @@ def generar_documento(
         )
         content_types_path.write_text(ct, encoding="utf-8")
 
-        fecha = date.today().isoformat()
-        out_name = f"{case['id']}__{template_id}__{fecha}.docx"
+        # incluye hora (no solo fecha) para que dos corridas del mismo caso el
+        # mismo día nunca apunten al mismo archivo — en Windows, sobrescribir
+        # un archivo que sigue abierto en Word falla con "Access is denied".
+        marca_tiempo = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        out_name = f"{case['id']}__{template_id}__{marca_tiempo}.docx"
         docx_out = output_dir / out_name
         rezip(tmp_path, docx_out)
 

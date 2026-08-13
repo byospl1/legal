@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import stat
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -60,10 +61,30 @@ def rezip(src_dir: Path, out_path: Path) -> None:
             os.umask(umask)
             mode = 0o666 & ~umask
         os.chmod(tmp_out, mode)
-        os.replace(tmp_out, out_path)
+        _replace_with_retry(tmp_out, out_path)
     finally:
         if tmp_out.exists():
             tmp_out.unlink()
+
+
+def _replace_with_retry(tmp_out: Path, out_path: Path, attempts: int = 6) -> None:
+    """os.replace() puede fallar en Windows con PermissionError (WinError 5)
+    si el archivo destino está abierto en Word/antivirus en ese instante.
+    Reintenta con backoff antes de rendirse con un mensaje claro."""
+    delay = 0.3
+    for i in range(attempts):
+        try:
+            os.replace(tmp_out, out_path)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise PermissionError(
+                    f"No se pudo guardar '{out_path.name}' porque otro programa lo tiene abierto "
+                    "(muy probablemente Word, si lo dejaste abierto de una corrida anterior). "
+                    "Cierra el archivo y vuelve a generar el documento."
+                )
+            time.sleep(delay)
+            delay = min(delay * 2, 3)
 
 
 # ---------------------------------------------------------------------------
