@@ -5,6 +5,7 @@ nunca dar un documento por bueno solo porque pasó validate.py.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -14,26 +15,74 @@ class PdfToolsError(Exception):
     pass
 
 
+def _program_files_dirs() -> list[Path]:
+    dirs = []
+    for env_var in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"):
+        val = os.environ.get(env_var)
+        if val:
+            dirs.append(Path(val))
+    return dirs
+
+
 def _find_soffice() -> str:
     for name in ("soffice", "libreoffice"):
         path = shutil.which(name)
         if path:
             return path
+
+    # Instalador por defecto de LibreOffice en Windows no siempre agrega
+    # soffice.exe al PATH — buscamos en las ubicaciones típicas.
+    for base in _program_files_dirs():
+        candidate = base / "LibreOffice" / "program" / "soffice.exe"
+        if candidate.is_file():
+            return str(candidate)
+    for candidate in (
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+        "/usr/bin/soffice",
+        "/usr/lib/libreoffice/program/soffice",
+    ):
+        if Path(candidate).is_file():
+            return candidate
+
     raise PdfToolsError(
-        "No se encontró LibreOffice (soffice) en el PATH. Instálalo desde "
+        "No se encontró LibreOffice (soffice) ni en el PATH ni en las rutas "
+        "típicas de instalación. Instálalo desde "
         "https://www.libreoffice.org/download/download/ — es requerido para "
-        "convertir los .docx generados a PDF de verificación."
+        "convertir los .docx generados a PDF de verificación. Si ya lo "
+        "instalaste y sigue sin encontrarse, revisa que exista "
+        r"C:\Program Files\LibreOffice\program\soffice.exe"
+        " (o la ruta equivalente donde lo instalaste)."
     )
 
 
 def _find_pdftoppm() -> str:
-    path = shutil.which("pdftoppm")
-    if not path:
-        raise PdfToolsError(
-            "No se encontró pdftoppm (Poppler) en el PATH. En Windows: instala "
-            "Poppler for Windows y agrega su carpeta bin al PATH."
-        )
-    return path
+    for name in ("pdftoppm",):
+        path = shutil.which(name)
+        if path:
+            return path
+
+    # Poppler for Windows se distribuye como .zip sin instalador; buscamos
+    # en las ubicaciones donde la mayoría de los tutoriales sugieren
+    # descomprimirlo.
+    for base in [Path("C:/"), *_program_files_dirs()]:
+        if not base.exists():
+            continue
+        for candidate in base.glob("poppler*/Library/bin/pdftoppm.exe"):
+            if candidate.is_file():
+                return str(candidate)
+        for candidate in base.glob("poppler*/bin/pdftoppm.exe"):
+            if candidate.is_file():
+                return str(candidate)
+
+    raise PdfToolsError(
+        "No se encontró pdftoppm (Poppler) ni en el PATH ni en las rutas "
+        "típicas. Descarga Poppler for Windows "
+        "(https://github.com/oschwartz10612/poppler-windows/releases), "
+        r"descomprímelo (ej. en C:\poppler) y agrega la carpeta "
+        r"...\Library\bin de adentro al PATH del sistema — o simplemente "
+        r"descomprímelo directo en C:\ (queda como C:\poppler-XX.XX.X\...) "
+        "para que este programa lo encuentre solo."
+    )
 
 
 def convert_to_pdf(docx_path: Path, out_dir: Path) -> Path:
