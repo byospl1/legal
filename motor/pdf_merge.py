@@ -191,17 +191,32 @@ def sugerir_anio(pdf_path: Path) -> str | None:
     return m.group(0) if m else None
 
 
-def sugerir_pais(pdf_path: Path) -> str | None:
+def _buscar_pais(texto: str | None) -> str | None:
     from motor.paises import LISTA_PAISES
 
-    texto = _extraer_texto_primeras_paginas(pdf_path)
     if not texto:
         return None
     texto_low = texto.lower()
     mejor = None
     for pais in LISTA_PAISES:
+        # "United States" casi siempre aparece porque estos reportes los
+        # publica el gobierno de EE.UU. sobre OTRO país — nunca es el país
+        # que realmente se busca aquí, así que se descarta como candidato.
+        if pais == "United States":
+            continue
         patron = r"\b" + re.escape(pais.lower()) + r"\b"
         if re.search(patron, texto_low):
             if mejor is None or len(pais) > len(mejor):
                 mejor = pais
     return mejor
+
+
+def sugerir_pais(pdf_path: Path) -> str | None:
+    # el nombre del archivo suele traer el país de forma más limpia que el
+    # texto (ej. "62451_HONDURAS-2024-HUMAN-RIGHTS-REPORT.pdf") — se
+    # intenta primero ahí antes de recurrir al contenido del PDF.
+    nombre = Path(pdf_path).stem.replace("_", " ").replace("-", " ")
+    pais_de_nombre = _buscar_pais(nombre)
+    if pais_de_nombre:
+        return pais_de_nombre
+    return _buscar_pais(_extraer_texto_primeras_paginas(pdf_path))
