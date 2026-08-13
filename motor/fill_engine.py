@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from motor.analyze_template import Sdt, extract_top_level_sdts
-from motor.exhibit_builder import build_dividers, build_exhibit_table
+from motor.exhibit_builder import build_dividers, build_exhibit_table, pluralizar_respondent
 from motor.ooxml_utils import merge_runs_in_document_xml, rezip, unpack
 from motor.validate import validate_docx
 
@@ -211,15 +211,28 @@ def _locate_divider_block(document_xml: str) -> tuple[int, int]:
     return pagebreak_start, title_end
 
 
-def _apply_exhibits(document_xml: str, tab_groups: list[dict]) -> str:
+def _apply_exhibits(document_xml: str, tab_groups: list[dict], plural: bool = False) -> str:
     tbl_start, tbl_end = _locate_tbl_by_markers(document_xml, ["TAB", "DESCRIPTION", "PAGES"])
-    new_table = build_exhibit_table(tab_groups)
+    new_table = build_exhibit_table(tab_groups, plural=plural)
     document_xml = document_xml[:tbl_start] + new_table + document_xml[tbl_end:]
 
     div_start, div_end = _locate_divider_block(document_xml)
     new_dividers = build_dividers(tab_groups)
     document_xml = document_xml[:div_start] + new_dividers + document_xml[div_end:]
 
+    return document_xml
+
+
+def _apply_plural_respondents(document_xml: str) -> str:
+    """Textos fijos de la plantilla ("Respondent" standalone antes de "In
+    Removal Proceedings", y "Respondent's" en el párrafo de Proof of
+    Service) deben decir "Respondents"/"Respondents'" cuando el caso tiene
+    riders. Los ítems de la tabla de exhibits ya se pluralizan aparte, al
+    construirse (ver _apply_exhibits/build_exhibit_table), así que aquí no
+    hace daño repetir el reemplazo — ya no queda "Respondent's" por tocar
+    ahí para cuando se llega a este paso."""
+    document_xml = document_xml.replace(">Respondent<", ">Respondents<")
+    document_xml = pluralizar_respondent(document_xml)
     return document_xml
 
 
@@ -267,11 +280,16 @@ def generar_documento(
         doc_path = tmp_path / "word" / "document.xml"
         merge_runs_in_document_xml(doc_path)
 
+        tiene_riders = bool(case.get("riders"))
+
         document_xml = doc_path.read_text(encoding="utf-8")
         document_xml = _apply_field_values(document_xml, field_map, values)
 
         if field_map.get("tiene_tabla_exhibits") and document_instance.get("exhibits"):
-            document_xml = _apply_exhibits(document_xml, document_instance["exhibits"])
+            document_xml = _apply_exhibits(document_xml, document_instance["exhibits"], plural=tiene_riders)
+
+        if tiene_riders:
+            document_xml = _apply_plural_respondents(document_xml)
 
         doc_path.write_text(document_xml, encoding="utf-8")
 

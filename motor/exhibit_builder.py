@@ -92,9 +92,23 @@ def _replace_in_first_t(xml: str, old: str, new: str) -> str:
     )
 
 
-def _build_category_xml(categoria: str, pais: str | None, anio_cc: str | None, anio_osac: str | None) -> str:
+def pluralizar_respondent(xml: str) -> str:
+    """"Respondent's" -> "Respondents'" (con las dos variantes de apóstrofe
+    que trae el original — ’ y el typo ´). Se usa cuando el caso tiene
+    riders (más de un aplicante) y el texto fijo de la plantilla debe
+    hablar en plural."""
+    xml = xml.replace("Respondent’s ", "Respondents’ ")
+    xml = xml.replace("Respondent´s ", "Respondents´ ")
+    return xml
+
+
+def _build_category_xml(
+    categoria: str, pais: str | None, anio_cc: str | None, anio_osac: str | None, plural: bool = False
+) -> str:
     frag_names = CATEGORY_FRAGMENTS[categoria]
     parts = [_load(n) for n in frag_names]
+    if plural:
+        parts = [pluralizar_respondent(p) for p in parts]
     if categoria == "form_of_identity":
         if not pais:
             raise ValueError("form_of_identity requiere 'pais'")
@@ -118,11 +132,15 @@ def _build_category_xml(categoria: str, pais: str | None, anio_cc: str | None, a
 
 
 def build_description_cell_content(
-    categorias: list[str], pais: str | None, anio_cc: str | None = None, anio_osac: str | None = None
+    categorias: list[str],
+    pais: str | None,
+    anio_cc: str | None = None,
+    anio_osac: str | None = None,
+    plural: bool = False,
 ) -> str:
     spacer = _load("spacer")
     ordered = [c for c in CATEGORY_ORDER if c in categorias]
-    blocks = [_build_category_xml(c, pais, anio_cc, anio_osac) for c in ordered]
+    blocks = [_build_category_xml(c, pais, anio_cc, anio_osac, plural) for c in ordered]
     return spacer.join(blocks)
 
 
@@ -158,9 +176,11 @@ def build_pages_cell_content(categorias: list[str], evidencias: dict | None, pag
     return blank.join(blocks)
 
 
-def build_exhibit_table(tab_groups: list[dict]) -> str:
+def build_exhibit_table(tab_groups: list[dict], plural: bool = False) -> str:
     """tab_groups: [{letra, paginas, categorias: [...], pais, anio_cc,
-    anio_osac, evidencias: {item_key: {"pagina_inicio": N, "num_paginas": M}, ...}}, ...]"""
+    anio_osac, evidencias: {item_key: {"pagina_inicio": N, "num_paginas": M}, ...}}, ...]
+    `plural`: True si el caso tiene riders (más de un aplicante) — hace que
+    los ítems de exhibits digan "Respondents'" en vez de "Respondent's"."""
     tbl_open = _load("tbl_open")
     tab_header = _load("tab_header_label")
     desc_header = _load("description_header_label")
@@ -179,7 +199,9 @@ def build_exhibit_table(tab_groups: list[dict]) -> str:
 
     for tg in tab_groups:
         letra_xml = _set_first_t_text(tab_value_tpl, tg["letra"])
-        desc_xml = build_description_cell_content(tg["categorias"], tg.get("pais"), tg.get("anio_cc"), tg.get("anio_osac"))
+        desc_xml = build_description_cell_content(
+            tg["categorias"], tg.get("pais"), tg.get("anio_cc"), tg.get("anio_osac"), plural
+        )
         pages_xml = build_pages_cell_content(tg["categorias"], tg.get("evidencias"), tg["paginas"])
         row = (
             "<w:tr>"
