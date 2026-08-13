@@ -49,6 +49,12 @@ def save_case(case: dict, store_dir: Path = CASE_STORE_DIR) -> dict:
     return case
 
 
+def siguiente_pagina(case: dict) -> int:
+    """Próxima página disponible para numerar evidencia de este caso
+    (continúa donde se quedó el último Tab con evidencia adjunta)."""
+    return int(case.get("siguiente_pagina") or 1)
+
+
 def next_tab_letra(ultimo: str | None) -> str:
     if not ultimo:
         return "A"

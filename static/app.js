@@ -2,6 +2,7 @@ let CATALOGOS = null;
 let PLANTILLAS = [];
 let CURRENT_CASE_ID = null;
 let tabCounter = 0;
+let PAGINA_INICIAL_CASO = 1;
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -103,6 +104,12 @@ async function loadCase(caseId) {
   $("#panelDocumento").style.display = "block";
   tabCounter = 0;
   $("#tabsList").innerHTML = "";
+  try {
+    const p = await api(`/api/casos/${caseId}/siguiente-pagina`);
+    PAGINA_INICIAL_CASO = p.siguiente_pagina;
+  } catch {
+    PAGINA_INICIAL_CASO = 1;
+  }
   await addTabRow();
 }
 
@@ -180,7 +187,7 @@ async function addTabRow() {
   div.innerHTML = `
     <div class="tab-head">
       <strong>Tab</strong>
-      <button type="button" class="danger" onclick="this.closest('.tab-card').remove()">Quitar</button>
+      <button type="button" class="danger" onclick="this.closest('.tab-card').remove(); recalcularPaginas();">Quitar</button>
     </div>
     <div class="grid">
       <div class="field">
@@ -191,6 +198,11 @@ async function addTabRow() {
         <label>Páginas (ej. 15-29)</label>
         <input type="text" class="tab-paginas" placeholder="1-12">
       </div>
+    </div>
+    <div class="field full" style="margin-top:10px;">
+      <label>Evidencia de este Tab (PDF) — se inserta después de la página "EXHIBIT {letra}" y se numera automáticamente</label>
+      <input type="file" class="tab-evidencia-input" accept="application/pdf">
+      <span class="muted tab-evidencia-status"></span>
     </div>
     <div class="categorias">
       ${CATEGORIA_KEYS.map((key) => {
@@ -229,6 +241,55 @@ async function addTabRow() {
   };
   formOfIdentityCheck.addEventListener("change", actualizarCamposPais);
   countryConditionsCheck.addEventListener("change", actualizarCamposPais);
+
+  const evidenciaInput = div.querySelector(".tab-evidencia-input");
+  const evidenciaStatus = div.querySelector(".tab-evidencia-status");
+  evidenciaInput.addEventListener("change", async () => {
+    const file = evidenciaInput.files[0];
+    if (!file) {
+      delete div.dataset.evidenciaId;
+      delete div.dataset.numPaginas;
+      evidenciaStatus.textContent = "";
+      recalcularPaginas();
+      return;
+    }
+    evidenciaStatus.textContent = "Subiendo…";
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/evidencia", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Error al subir el archivo");
+      div.dataset.evidenciaId = data.evidencia_id;
+      div.dataset.numPaginas = data.num_paginas;
+      evidenciaStatus.textContent = `${data.num_paginas} página(s) detectadas.`;
+      recalcularPaginas();
+    } catch (e) {
+      evidenciaStatus.textContent = "Error: " + e.message;
+      evidenciaInput.value = "";
+      delete div.dataset.evidenciaId;
+      delete div.dataset.numPaginas;
+    }
+  });
+
+  recalcularPaginas();
+}
+
+function recalcularPaginas() {
+  let pagina = PAGINA_INICIAL_CASO;
+  for (const card of document.querySelectorAll("#tabsList .tab-card")) {
+    const paginasInput = card.querySelector(".tab-paginas");
+    const numPaginas = parseInt(card.dataset.numPaginas || "", 10);
+    if (card.dataset.evidenciaId && !isNaN(numPaginas) && numPaginas > 0) {
+      const inicio = pagina;
+      const fin = pagina + numPaginas - 1;
+      paginasInput.value = numPaginas === 1 ? String(inicio) : `${inicio}-${fin}`;
+      paginasInput.readOnly = true;
+      pagina = fin + 1;
+    } else {
+      paginasInput.readOnly = false;
+    }
+  }
 }
 
 function nextLetterFromLastRow() {
@@ -252,7 +313,8 @@ function collectExhibits() {
     const necesitaAnios = categorias.includes("country_conditions");
     const anio_cc = necesitaAnios ? card.querySelector(".tab-anio-cc").value.trim() : null;
     const anio_osac = necesitaAnios ? card.querySelector(".tab-anio-osac").value.trim() : null;
-    return { letra, paginas, categorias, pais, anio_cc, anio_osac };
+    const evidencia_id = card.dataset.evidenciaId || null;
+    return { letra, paginas, categorias, pais, anio_cc, anio_osac, evidencia_id };
   });
 }
 
@@ -291,8 +353,9 @@ async function generarDocumento() {
     titulo: $("#titulo").value,
     exhibits,
   };
-  const separar_por_tab = $("#separarPorTab").checked;
-  const generar_pdf = $("#generarPdf").checked;
+  const hayEvidencia = exhibits.some((tg) => tg.evidencia_id);
+  const separar_por_tab = hayEvidencia ? true : $("#separarPorTab").checked;
+  const generar_pdf = hayEvidencia ? true : $("#generarPdf").checked;
 
   btn.disabled = true;
   spinner.style.display = "inline-block";
@@ -315,7 +378,12 @@ async function generarDocumento() {
         html += `<div class="status err">El documento se generó pero no pasó la validación:\n${doc.validation_errors.join("\n")}</div>`;
       }
       if (generar_pdf && !doc.pdf_generado) {
-        html += `<div class="status warn">No se pudo generar el PDF de verificación (revisa que LibreOffice esté instalado). El .docx sí se generó — ábrelo en Word y revísalo antes de usarlo.</div>`;
+        html += `<div class="status warn">No se pudo generar el PDF (revisa que Word/LibreOffice estén disponibles). El .docx sí se generó — ábrelo y revísalo antes de usarlo.</div>`;
+      }
+      if (doc.evidencia_fusionada) {
+        html += `<div class="status ok">Evidencia insertada y numerada dentro del PDF.</div>`;
+      } else if (doc.evidencia_error) {
+        html += `<div class="status err">No se pudo insertar la evidencia: ${escapeHtml(doc.evidencia_error)}</div>`;
       }
       html += `<div class="result-links">
         <a href="${doc.docx_url}" download>Descargar .docx</a>

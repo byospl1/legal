@@ -11,22 +11,33 @@ from __future__ import annotations
 import json
 import re
 import traceback
+import uuid
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
+from werkzeug.utils import secure_filename
 
-from motor.case_store import CASE_STORE_DIR, list_cases, load_case, next_tab_letra, save_case
+from motor.case_store import CASE_STORE_DIR, list_cases, load_case, next_tab_letra, save_case, siguiente_pagina
 from motor.fill_engine import FillEngineError, generar_lote
+from motor.pdf_merge import PdfMergeError, combinar_portada_y_evidencia, contar_paginas
 from motor.validate import ValidationError
 
 BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE_DIR / "output"
 INPUT_DIR = BASE_DIR / "input"
 PLANTILLAS_DIR = BASE_DIR / "plantillas"
+EVIDENCIA_DIR = OUTPUT_DIR / "_evidencia"
 
 INPUT_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 CASE_STORE_DIR.mkdir(exist_ok=True)
+EVIDENCIA_DIR.mkdir(parents=True, exist_ok=True)
+
+# Registro en memoria de los PDFs de evidencia subidos en esta sesión del
+# servidor (id -> ruta + número de páginas). Los archivos también quedan en
+# disco (EVIDENCIA_DIR) para no perderlos, pero el número de páginas se
+# recalcula si hace falta.
+_EVIDENCIAS: dict[str, dict] = {}
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
@@ -101,6 +112,59 @@ def api_siguiente_letra(case_id: str):
     return jsonify({"siguiente_letra": next_tab_letra(ultimo)})
 
 
+@app.get("/api/casos/<case_id>/siguiente-pagina")
+def api_siguiente_pagina(case_id: str):
+    case = load_case(case_id)
+    return jsonify({"siguiente_pagina": siguiente_pagina(case) if case else 1})
+
+
+@app.post("/api/evidencia")
+def api_subir_evidencia():
+    archivo = request.files.get("file")
+    if archivo is None or not archivo.filename:
+        return jsonify({"error": "No se recibió ningún archivo"}), 400
+    if not archivo.filename.lower().endswith(".pdf"):
+        return jsonify({"error": "El archivo de evidencia debe ser un PDF"}), 400
+
+    evidencia_id = uuid.uuid4().hex
+    nombre_seguro = secure_filename(archivo.filename) or "evidencia.pdf"
+    destino = EVIDENCIA_DIR / f"{evidencia_id}__{nombre_seguro}"
+    archivo.save(destino)
+
+    try:
+        num_paginas = contar_paginas(destino)
+    except PdfMergeError as e:
+        destino.unlink(missing_ok=True)
+        return jsonify({"error": str(e)}), 400
+
+    _EVIDENCIAS[evidencia_id] = {"path": destino, "num_paginas": num_paginas, "nombre": archivo.filename}
+    return jsonify({"evidencia_id": evidencia_id, "num_paginas": num_paginas, "nombre": archivo.filename})
+
+
+def _resolver_paginas_evidencia(case: dict, exhibits: list[dict]) -> None:
+    """Calcula el rango de páginas de cada Tab con evidencia adjunta,
+    continuando el conteo del caso, y actualiza `case['siguiente_pagina']`.
+    Los Tabs sin evidencia conservan el valor de 'paginas' capturado a mano."""
+    pagina = siguiente_pagina(case)
+    for tg in exhibits:
+        evidencia_id = tg.get("evidencia_id")
+        if not evidencia_id:
+            continue
+        info = _EVIDENCIAS.get(evidencia_id)
+        if not info:
+            raise FillEngineError(
+                f"No se encontró el archivo de evidencia subido para el Tab {tg.get('letra', '?')} "
+                "— si reiniciaste el servidor después de subirlo, vuelve a subirlo e intenta de nuevo."
+            )
+        n = info["num_paginas"]
+        inicio = pagina
+        fin = pagina + n - 1
+        tg["paginas"] = str(inicio) if n == 1 else f"{inicio}-{fin}"
+        tg["_pagina_inicial_evidencia"] = inicio
+        pagina = fin + 1
+    case["siguiente_pagina"] = pagina
+
+
 @app.post("/api/generar")
 def api_generar():
     body = request.get_json(force=True)
@@ -114,6 +178,20 @@ def api_generar():
     case = load_case(case_id)
     if case is None:
         return jsonify({"error": "Caso no encontrado"}), 404
+
+    exhibits = document_instance.get("exhibits") or []
+    tiene_evidencia = any(tg.get("evidencia_id") for tg in exhibits)
+    if tiene_evidencia:
+        # insertar evidencia requiere un PDF de portada, y requiere que cada
+        # Tab sea su propio archivo (no se puede "insertar después de la
+        # divisoria de este Tab" dentro de un documento combinado con varios
+        # Tabs adentro).
+        generar_pdf = True
+        separar_por_tab = True
+        try:
+            _resolver_paginas_evidencia(case, exhibits)
+        except FillEngineError as e:
+            return jsonify({"error": str(e)}), 400
 
     try:
         resultados = generar_lote(
@@ -130,26 +208,46 @@ def api_generar():
         traceback.print_exc()
         return jsonify({"error": f"Error inesperado generando el documento: {e}"}), 500
 
-    exhibits = document_instance.get("exhibits") or []
     if exhibits:
         case["ultimo_tab_letra"] = exhibits[-1]["letra"]
         save_case(case)
 
-    documentos = []
-    for result in resultados:
-        preview_urls = [f"/output/_preview/{result.docx_path.stem}/{p.name}" for p in result.preview_images]
-        documentos.append(
-            {
-                "docx_url": f"/output/{result.docx_path.name}",
-                "pdf_url": f"/output/{result.pdf_path.name}" if result.pdf_path else None,
-                "preview_urls": preview_urls,
-                "validation_ok": result.validation_ok,
-                "validation_errors": result.validation_errors,
-                "pdf_generado": result.pdf_path is not None,
-            }
-        )
+    # resultados[i] corresponde a exhibits[i] cuando separar_por_tab generó
+    # un archivo por Tab (que es obligatorio si hay evidencia, ver arriba).
+    tabs_por_resultado = exhibits if (separar_por_tab and len(resultados) == len(exhibits)) else [None] * len(resultados)
 
-    return jsonify({"documentos": documentos})
+    documentos = []
+    for result, tab_group in zip(resultados, tabs_por_resultado):
+        preview_urls = [f"/output/_preview/{result.docx_path.stem}/{p.name}" for p in result.preview_images]
+        entry = {
+            "docx_url": f"/output/{result.docx_path.name}",
+            "pdf_url": f"/output/{result.pdf_path.name}" if result.pdf_path else None,
+            "preview_urls": preview_urls,
+            "validation_ok": result.validation_ok,
+            "validation_errors": result.validation_errors,
+            "pdf_generado": result.pdf_path is not None,
+            "evidencia_fusionada": False,
+        }
+
+        if tab_group and tab_group.get("evidencia_id") and result.pdf_path:
+            info = _EVIDENCIAS.get(tab_group["evidencia_id"])
+            if info is None:
+                entry["evidencia_error"] = "No se encontró el archivo de evidencia subido."
+            else:
+                try:
+                    combinar_portada_y_evidencia(
+                        result.pdf_path,
+                        info["path"],
+                        tab_group["_pagina_inicial_evidencia"],
+                        result.pdf_path,
+                    )
+                    entry["evidencia_fusionada"] = True
+                except PdfMergeError as e:
+                    entry["evidencia_error"] = str(e)
+
+        documentos.append(entry)
+
+    return jsonify({"documentos": documentos, "siguiente_pagina": case.get("siguiente_pagina", 1)})
 
 
 @app.get("/output/<path:filename>")

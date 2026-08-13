@@ -1,11 +1,18 @@
-"""Conversión a PDF (LibreOffice headless) y rasterizado (Poppler) para el
-paso de verificación visual obligatorio (sección 5.2, paso 9 de la spec):
-nunca dar un documento por bueno solo porque pasó validate.py.
+"""Conversión a PDF y rasterizado (Poppler) para el paso de verificación
+visual (sección 5.2, paso 9 de la spec): nunca dar un documento por bueno
+solo porque pasó validate.py.
+
+Motor de conversión: en Windows con Microsoft Word instalado, se usa Word
+mismo (vía COM) — es el único motor que garantiza que el PDF se vea
+IDÉNTICO al .docx, sin sustitución de fuentes (LibreOffice no siempre
+resuelve igual las fuentes de tema del .dotx original, y eso desalinea
+texto). Si Word no está disponible, cae a LibreOffice headless.
 """
 
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import subprocess
 from pathlib import Path
@@ -13,6 +20,11 @@ from pathlib import Path
 
 class PdfToolsError(Exception):
     pass
+
+
+class WordNotAvailableError(PdfToolsError):
+    """Word/pywin32 no está disponible en esta máquina — se debe intentar
+    con LibreOffice en su lugar, no es un error real de conversión."""
 
 
 def _program_files_dirs() -> list[Path]:
@@ -85,7 +97,61 @@ def _find_pdftoppm() -> str:
     )
 
 
-def convert_to_pdf(docx_path: Path, out_dir: Path) -> Path:
+def _convert_with_word(docx_path: Path, out_dir: Path) -> Path:
+    """Convierte usando Microsoft Word (COM). Fidelidad exacta — es el
+    mismo motor de renderizado que ves al abrir el archivo en Word."""
+    try:
+        import pythoncom
+        import win32com.client
+    except ImportError as e:
+        raise WordNotAvailableError(f"pywin32 no está instalado: {e}")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = out_dir / (docx_path.stem + ".pdf")
+
+    pythoncom.CoInitialize()
+    word = None
+    doc = None
+    try:
+        try:
+            word = win32com.client.DispatchEx("Word.Application")
+        except Exception as e:  # noqa: BLE001
+            raise WordNotAvailableError(f"No se pudo iniciar Microsoft Word (¿está instalado?): {e}")
+
+        word.Visible = False
+        word.DisplayAlerts = 0
+        try:
+            doc = word.Documents.Open(
+                str(docx_path.resolve()),
+                ReadOnly=True,
+                AddToRecentFiles=False,
+                ConfirmConversions=False,
+            )
+            wd_format_pdf = 17
+            doc.SaveAs(str(pdf_path.resolve()), FileFormat=wd_format_pdf)
+        except WordNotAvailableError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise PdfToolsError(f"Word abrió pero falló al convertir '{docx_path.name}' a PDF: {e}")
+    finally:
+        if doc is not None:
+            try:
+                doc.Close(False)
+            except Exception:  # noqa: BLE001
+                pass
+        if word is not None:
+            try:
+                word.Quit()
+            except Exception:  # noqa: BLE001
+                pass
+        pythoncom.CoUninitialize()
+
+    if not pdf_path.exists():
+        raise PdfToolsError("Word no generó el archivo PDF esperado.")
+    return pdf_path
+
+
+def _convert_with_libreoffice(docx_path: Path, out_dir: Path) -> Path:
     soffice = _find_soffice()
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -132,6 +198,17 @@ def convert_to_pdf(docx_path: Path, out_dir: Path) -> Path:
     if result.returncode != 0 or not pdf_path.exists():
         raise PdfToolsError(f"Fallo al convertir a PDF: {result.stdout}\n{result.stderr}")
     return pdf_path
+
+
+def convert_to_pdf(docx_path: Path, out_dir: Path) -> Path:
+    """En Windows con Word instalado, usa Word (fidelidad exacta, sin
+    sustitución de fuentes). Si Word no está disponible, cae a LibreOffice."""
+    if platform.system() == "Windows":
+        try:
+            return _convert_with_word(docx_path, out_dir)
+        except WordNotAvailableError:
+            pass  # sin Word instalado/registrado — se intenta con LibreOffice
+    return _convert_with_libreoffice(docx_path, out_dir)
 
 
 def rasterize(pdf_path: Path, out_dir: Path, dpi: int = 100) -> list[Path]:
