@@ -34,6 +34,43 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+/** Formatea un A# insertando "-" cada 3 dígitos (ej. "333999888" ->
+ * "333-999-888"), preservando el prefijo "A" si el usuario lo escribió. */
+function formatANumber(raw) {
+  const trimmed = raw.trimStart();
+  const hasPrefix = /^A/i.test(trimmed);
+  const resto = hasPrefix ? trimmed.slice(1) : trimmed;
+  const digitos = resto.replace(/\D/g, "").slice(0, 9);
+  const agrupado = digitos.match(/.{1,3}/g)?.join("-") || "";
+  if (!hasPrefix) return agrupado;
+  return agrupado ? `A ${agrupado}` : "A";
+}
+
+/** Ata el formateo automático de A# a un <input>, preservando la posición
+ * del cursor cuando el usuario edita en medio del texto (no solo al final). */
+function attachANumberFormatter(input) {
+  input.addEventListener("input", () => {
+    const before = input.value;
+    const cursorBefore = input.selectionStart ?? before.length;
+    const digitsBeforeCursor = before.slice(0, cursorBefore).replace(/\D/g, "").length;
+    const formatted = formatANumber(before);
+    input.value = formatted;
+    let seen = 0;
+    let pos = formatted.length;
+    for (let i = 0; i < formatted.length; i++) {
+      if (/\d/.test(formatted[i])) {
+        seen++;
+        if (seen === digitsBeforeCursor) {
+          pos = i + 1;
+          break;
+        }
+      }
+    }
+    if (digitsBeforeCursor === 0) pos = /^A/i.test(formatted) ? Math.min(2, formatted.length) : 0;
+    input.setSelectionRange(pos, pos);
+  });
+}
+
 async function init() {
   const data = await api("/api/init");
   CATALOGOS = data.catalogos;
@@ -101,6 +138,7 @@ function addRiderRow(rider) {
     <button type="button" class="danger" onclick="this.closest('.rider-row').remove()">Quitar</button>
   `;
   $("#ridersList").appendChild(div);
+  attachANumberFormatter(div.querySelector(".rider-a-number"));
 }
 
 function collectRiders() {
@@ -806,6 +844,7 @@ async function generarDocumento() {
 
 document.addEventListener("DOMContentLoaded", () => {
   init();
+  attachANumberFormatter($("#a_number"));
   $("#selCaso").addEventListener("change", (e) => loadCase(e.target.value));
   $("#btnNuevoCaso").addEventListener("click", clearCaseForm);
   $("#btnGuardarCaso").addEventListener("click", guardarCaso);
