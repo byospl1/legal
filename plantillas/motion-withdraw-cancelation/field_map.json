@@ -1,0 +1,31 @@
+{
+  "template_id": "motion-withdraw-cancelation",
+  "archivo": "MOTION_TO_WITHDRAW_CANCELATION.docx",
+  "campos_simples": [],
+  "campos_anidados": [],
+  "grupos_bookmark": [],
+  "grupos_sync_manual": [
+    { "nombre": "abogado", "ids": ["910000001", "910000002"], "tipo": "texto", "opciones": [] },
+    { "nombre": "cliente_nombre", "ids": ["910000003", "910000004", "910000005", "910000006", "910000007", "910000008"], "tipo": "texto", "opciones": [] },
+    { "nombre": "corte_sede", "ids": ["910000009", "910000010", "910000011"], "tipo": "texto", "opciones": [] },
+    { "nombre": "a_number", "ids": ["910000012", "910000013", "910000014", "910000015"], "tipo": "texto", "opciones": [] },
+    { "nombre": "juez", "ids": ["910000016", "910000018"], "tipo": "texto", "opciones": [] },
+    { "nombre": "proxima_audiencia", "ids": ["910000017"], "tipo": "texto", "opciones": [] },
+    { "nombre": "abogado_firma_coma", "ids": ["910000019"], "tipo": "texto", "opciones": [] },
+    { "nombre": "juez_apellido_mayus", "ids": ["910000020"], "tipo": "texto", "opciones": [] },
+    { "nombre": "direccion_anterior", "ids": ["910000021"], "tipo": "texto", "opciones": [] },
+    { "nombre": "direccion_actual", "ids": ["910000022"], "tipo": "texto", "opciones": [] },
+    { "nombre": "fecha_cancelacion", "ids": ["910000023"], "tipo": "texto", "opciones": [] },
+    { "nombre": "preparador_mayus", "ids": ["910000024", "910000025"], "tipo": "texto", "opciones": [] }
+  ],
+  "campos_automaticos_no_tocar": [
+    { "tipo": "DATE", "descripcion": "Campo de Word autoactualizable (DATE \\@ \"MMMM d, yyyy\"), firma del cuerpo de la moción — no tocar" },
+    { "tipo": "DATE", "descripcion": "Campo de Word autoactualizable (DATE \\@ \"M/d/yyyy\"), Certificate of Service — reemplazó un texto suelto \"10/15/2025\" que parecía residuo de otro caso, ahora se auto-actualiza como el resto de las fechas de firma" }
+  ],
+  "tiene_tabla_exhibits": false,
+  "evidencia_exhibits": [
+    { "letra": "A", "descripcion": "Cancelation Request (inglés y español)", "anchor_texto": "“EXHIBIT A”" },
+    { "letra": "B", "descripcion": "Disengagement Letter (inglés y español)", "anchor_texto": "“EXHIBIT B”" },
+    { "letra": "C", "descripcion": "Hearing Notice de la próxima Individual Hearing", "anchor_texto": "“EXHIBIT C”" }
+  ]
+}

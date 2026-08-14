@@ -346,6 +346,16 @@ def _abogado_firma_coma(abogado: str | None) -> str | None:
     return f"{nombre}, Esq." if nombre else None
 
 
+def _juez_apellido_mayus(juez: str | None) -> str | None:
+    """Apellido del juez en mayúsculas (ej. "Diaz, Irma" -> "DIAZ") — se usa
+    en la línea "TO ALL PARTIES AND THE HONORABLE IMMIGRATION JUDGE {...},"
+    de Motion to Withdraw - Cancelation of Services."""
+    if not juez:
+        return None
+    apellido = juez.split(",")[0].strip()
+    return apellido.upper() or None
+
+
 def _resolve_values(case: dict, document_instance: dict) -> dict[str, str]:
     from motor.case_store import a_number_para_documento, nombre_para_documento
 
@@ -355,6 +365,7 @@ def _resolve_values(case: dict, document_instance: dict) -> dict[str, str]:
         "a_number": a_number_para_documento(case),
         "corte_sede": case["corte_sede"],
         "juez": case["juez"],
+        "juez_apellido_mayus": _juez_apellido_mayus(case["juez"]),
         "proxima_audiencia": case["proxima_audiencia"],
         "abogado": case["abogado"],
         "abogado_firma": _abogado_firma(case["abogado"]),
@@ -369,6 +380,9 @@ def _resolve_values(case: dict, document_instance: dict) -> dict[str, str]:
         # se genera este documento, no se guardan en el caso.
         "direccion_conocida": document_instance.get("direccion_conocida"),
         "telefono_conocido": document_instance.get("telefono_conocido"),
+        "direccion_anterior": document_instance.get("direccion_anterior"),
+        "direccion_actual": document_instance.get("direccion_actual"),
+        "fecha_cancelacion": document_instance.get("fecha_cancelacion"),
     }
     return {k: v for k, v in values.items() if v is not None}
 
