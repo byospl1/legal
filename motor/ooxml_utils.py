@@ -295,10 +295,29 @@ def _next_relationship_id(rels_xml: str) -> str:
     return f"rId{max(ids) + 1 if ids else 1}"
 
 
+def _ensure_png_content_type(tmp_path: Path) -> None:
+    """Garantiza que [Content_Types].xml declare la extensión "png" — no
+    todas las plantillas traían una imagen desde el original (de donde
+    Word hereda ese Default automáticamente), así que insertar una firma
+    en una plantilla que nunca tuvo un PNG antes dejaba la parte sin
+    content type, y Word/python-docx la rechazan como paquete inválido."""
+    ct_path = tmp_path / "[Content_Types].xml"
+    ct_xml = ct_path.read_text(encoding="utf-8")
+    if 'Extension="png"' in ct_xml or 'Extension="PNG"' in ct_xml:
+        return
+    new_default = '<Default Extension="png" ContentType="image/png"/>'
+    ct_xml = ct_xml.replace("<Types ", "<Types ", 1)
+    insert_at = ct_xml.index(">", ct_xml.index("<Types ")) + 1
+    ct_xml = ct_xml[:insert_at] + new_default + ct_xml[insert_at:]
+    ct_path.write_text(ct_xml, encoding="utf-8")
+
+
 def add_image_relationship(tmp_path: Path, image_path: Path, media_name: str) -> str:
     """Copia `image_path` a word/media/{media_name} dentro del .docx
     desempaquetado en `tmp_path` y agrega su relationship a
     word/_rels/document.xml.rels. Devuelve el rId asignado."""
+    _ensure_png_content_type(tmp_path)
+
     media_dir = tmp_path / "word" / "media"
     media_dir.mkdir(parents=True, exist_ok=True)
     dest = media_dir / media_name
