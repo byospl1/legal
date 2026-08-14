@@ -232,6 +232,27 @@ function onPlantillaChange() {
   const titulos = (CATALOGOS.titulo && CATALOGOS.titulo[templateId]) || [];
   $("#titulo").innerHTML = titulos.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join("");
   $("#exhibitsSection").style.display = plantilla && plantilla.tiene_tabla_exhibits ? "block" : "none";
+
+  const camposExtra = (plantilla && plantilla.campos_extra) || [];
+  const cont = $("#camposExtraSection");
+  cont.style.display = camposExtra.length ? "grid" : "none";
+  cont.innerHTML = camposExtra
+    .map(
+      (c) => `
+    <div class="field">
+      <label>${escapeHtml(c.etiqueta)}</label>
+      <input type="text" class="campo-extra" data-nombre="${escapeHtml(c.nombre)}" placeholder="${escapeHtml(c.placeholder || "")}">
+    </div>`
+    )
+    .join("");
+}
+
+function collectCamposExtra() {
+  const out = {};
+  for (const input of document.querySelectorAll("#camposExtraSection .campo-extra")) {
+    out[input.dataset.nombre] = input.value.trim();
+  }
+  return out;
 }
 
 const CATEGORIA_KEYS = ["i589_application", "country_conditions", "form_of_identity", "supplemental_evidence", "fee"];
@@ -779,6 +800,7 @@ async function generarDocumento() {
     template_id: templateId,
     titulo: $("#titulo").value,
     exhibits,
+    ...collectCamposExtra(),
   };
   const hayEvidencia = exhibits.some(
     (tg) =>

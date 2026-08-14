@@ -13,6 +13,25 @@
       "archivo": "webex-motion/MOTION_FOR_WEBEX.docx",
       "field_map": "webex-motion/field_map.json",
       "tiene_tabla_exhibits": false
+    },
+    {
+      "template_id": "motion-withdraw-no-cooperation",
+      "nombre": "Motion to Withdraw — No Cooperation",
+      "archivo": "motion-withdraw-no-cooperation/MOTION_TO_WITHDRAW_NO_COOPERATION.docx",
+      "field_map": "motion-withdraw-no-cooperation/field_map.json",
+      "tiene_tabla_exhibits": false,
+      "campos_extra": [
+        {
+          "nombre": "direccion_conocida",
+          "etiqueta": "Última dirección conocida del cliente",
+          "placeholder": "ej. 7112 Seville Ave, Huntington Park, CA 90255"
+        },
+        {
+          "nombre": "telefono_conocido",
+          "etiqueta": "Teléfono conocido del cliente",
+          "placeholder": "ej. (562) 440-5200"
+        }
+      ]
     }
   ]
 }

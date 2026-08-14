@@ -330,9 +330,26 @@ def _abogado_firma(abogado: str | None) -> str | None:
     return f"{nombre} Esq."
 
 
+def _abogado_nombre(abogado: str | None) -> str | None:
+    """Nombre solo del abogado, sin "Esq." ni SBN (ej. "John Negron,
+    Esq. (SBN 21806)" -> "John Negron") — se usa en párrafos como "I,
+    {nombre}, declare..." o "DECLARATION OF {NOMBRE}"."""
+    if not abogado:
+        return None
+    return abogado.split(",")[0].strip()
+
+
+def _abogado_firma_coma(abogado: str | None) -> str | None:
+    """Forma corta CON coma (ej. "Michael Quiroga, Esq.") — a diferencia de
+    _abogado_firma (sin coma), es la convención usada en Motion to Withdraw."""
+    nombre = _abogado_nombre(abogado)
+    return f"{nombre}, Esq." if nombre else None
+
+
 def _resolve_values(case: dict, document_instance: dict) -> dict[str, str]:
     from motor.case_store import a_number_para_documento, nombre_para_documento
 
+    preparador = case.get("preparador")
     values = {
         "cliente_nombre": nombre_para_documento(case),
         "a_number": a_number_para_documento(case),
@@ -341,8 +358,17 @@ def _resolve_values(case: dict, document_instance: dict) -> dict[str, str]:
         "proxima_audiencia": case["proxima_audiencia"],
         "abogado": case["abogado"],
         "abogado_firma": _abogado_firma(case["abogado"]),
-        "preparador": case["preparador"],
-        "titulo": document_instance["titulo"],
+        "abogado_firma_coma": _abogado_firma_coma(case["abogado"]),
+        "abogado_nombre": _abogado_nombre(case["abogado"]),
+        "abogado_nombre_mayus": (_abogado_nombre(case["abogado"]) or "").upper() or None,
+        "preparador": preparador,
+        "preparador_mayus": preparador.upper() if preparador else None,
+        "titulo": document_instance.get("titulo"),
+        # campos propios de esta corrida (no del caso): específicos de la
+        # narrativa de esta moción en particular, se capturan cada vez que
+        # se genera este documento, no se guardan en el caso.
+        "direccion_conocida": document_instance.get("direccion_conocida"),
+        "telefono_conocido": document_instance.get("telefono_conocido"),
     }
     return {k: v for k, v in values.items() if v is not None}
 
@@ -385,7 +411,11 @@ def generar_documento(
 
         document_xml = _apply_firmas_imagen(document_xml, tmp_path, field_map, case)
 
-        if tiene_riders:
+        # _apply_plural_respondents busca frases EXACTAS fijas de la
+        # plantilla i589-tab-cover (">Respondent<", "A True Copy of the
+        # Respondent's ") -- no aplica a otras plantillas, cada una tiene su
+        # propia convención de singular/plural que aún no se automatiza.
+        if tiene_riders and template_id == "i589-tab-cover":
             document_xml = _apply_plural_respondents(document_xml)
 
         doc_path.write_text(document_xml, encoding="utf-8")
