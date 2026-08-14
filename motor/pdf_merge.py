@@ -191,18 +191,17 @@ def sugerir_anio(pdf_path: Path) -> str | None:
     return m.group(0) if m else None
 
 
-_TIPO_FEE_RE = re.compile(r"\b(initial|annual)\b", re.IGNORECASE)
+_INITIAL_FEE_RE = re.compile(r"initial\s+application\s+fee", re.IGNORECASE)
 
 
-def sugerir_tipo_fee(pdf_path: Path) -> str | None:
-    """Busca "Initial" o "Annual" SOLO en el nombre del archivo subido —
-    a diferencia de país/año, el texto de estos recibos suele traer ambas
-    palabras en instrucciones/boilerplate no relacionado, así que escanear
-    el contenido del PDF da falsos positivos. El nombre del archivo (que
-    el propio usuario nombra) es la única señal confiable aquí."""
-    nombre = Path(pdf_path).stem.replace("_", " ").replace("-", " ")
-    m = _TIPO_FEE_RE.search(nombre)
-    return m.group(1).capitalize() if m else None
+def sugerir_tipo_fee(pdf_path: Path) -> str:
+    """El recibo trae un campo "Filing Type: ... Initial Application Fee
+    for Asylum..." cuando es la cuota inicial. Si esa frase específica
+    aparece en el texto, es "Initial"; si no aparece, es "Annual" — regla
+    exacta pedida por Hugo (buscar una palabra suelta "annual"/"initial"
+    daba falsos positivos con instrucciones/boilerplate no relacionado)."""
+    texto = _extraer_texto_primeras_paginas(pdf_path)
+    return "Initial" if _INITIAL_FEE_RE.search(texto) else "Annual"
 
 
 def _buscar_pais(texto: str | None) -> str | None:
