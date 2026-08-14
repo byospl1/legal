@@ -191,6 +191,20 @@ def sugerir_anio(pdf_path: Path) -> str | None:
     return m.group(0) if m else None
 
 
+def sugerir_titulo_noticia(pdf_path: Path) -> str | None:
+    """Sugerencia (editable) del título de una noticia: la primera línea
+    no vacía del texto extraído de la página 1 — en la mayoría de los PDFs
+    de artículos de prensa esa línea es el titular. No siempre acierta
+    (depende de cómo esté armado el PDF), por eso queda como sugerencia,
+    nunca se usa sin que el usuario la vea y pueda corregirla."""
+    texto = _extraer_texto_primeras_paginas(pdf_path, max_paginas=1)
+    for linea in texto.splitlines():
+        linea = linea.strip()
+        if linea:
+            return linea[:200]
+    return None
+
+
 _INITIAL_FEE_RE = re.compile(r"initial\s+application\s+fee", re.IGNORECASE)
 
 

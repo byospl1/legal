@@ -41,6 +41,15 @@ CATEGORY_FRAGMENTS: dict[str, list[str]] = {
     "fee": ["subtitle_fee", "item_fee_receipt", "item_fbi_fingerprint"],
 }
 
+# Textos fijos por tipo de documento de Supplemental Evidence. "News" lleva
+# título variable (el de la noticia); los demás son fijos.
+TIPOS_SUPPLEMENTAL_EVIDENCE = ["Declaration", "Psychological Report", "News"]
+
+_TEXTO_DECLARATION = (
+    "Respondent’s Declaration for Support of Asylum Withholding of Removal and Relief Under CAT with English Translation."
+)
+_TEXTO_PSYCHOLOGICAL_REPORT = "Respondent’s Psychological Report."
+
 CATEGORY_ORDER = ["i589_application", "country_conditions", "form_of_identity", "supplemental_evidence", "fee"]
 
 # Cada categoría puede tener uno o más "documentos" independientes que se
@@ -48,8 +57,10 @@ CATEGORY_ORDER = ["i589_application", "country_conditions", "form_of_identity", 
 # CATEGORY_FRAGMENTS[categoria] (y por lo tanto también la posición del
 # párrafo correspondiente en la columna PAGES). El orden de esta lista es
 # también el orden en el que se concatenan los PDFs subidos dentro de la
-# categoría. form_of_identity NO aparece aquí — su lista de documentos es
-# dinámica (una por persona del caso), ver más abajo.
+# categoría. form_of_identity y supplemental_evidence NO aparecen aquí —
+# sus listas de documentos son dinámicas (una por persona del caso, y una
+# lista libre de 0-N documentos con tipo variable, respectivamente), ver
+# más abajo.
 ITEMS_POR_CATEGORIA: dict[str, list[dict]] = {
     "i589_application": [
         {"key": "aplicacion", "label": "I-589 Application", "frag_index": 0},
@@ -57,9 +68,6 @@ ITEMS_POR_CATEGORIA: dict[str, list[dict]] = {
     "country_conditions": [
         {"key": "country_reports", "label": "Country Reports on Human Rights Practice", "frag_index": 1},
         {"key": "osac", "label": "OSAC Crime and Safety Report", "frag_index": 2},
-    ],
-    "supplemental_evidence": [
-        {"key": "declaracion", "label": "Declaración + traducción", "frag_index": 1},
     ],
     "fee": [
         {"key": "fee_receipt", "label": "Fee Receipt", "frag_index": 1},
@@ -166,6 +174,50 @@ def _identidades_por_defecto() -> list[dict]:
     return [{"persona_nombre": None, "tipo_doc": "Passport"}]
 
 
+def _supplemental_evidence_line_text(tipo: str | None, titulo: str | None) -> str:
+    if tipo == "News":
+        titulo = titulo or "…"
+        return f"Respondent’s News about {titulo}."
+    if tipo == "Psychological Report":
+        return _TEXTO_PSYCHOLOGICAL_REPORT
+    return _TEXTO_DECLARATION
+
+
+def _build_supplemental_evidence_description(documentos: list[dict], plural: bool) -> str:
+    subtitle = _load("subtitle_supplemental_evidence")
+    item_tpl = _load("item_declaration")
+    if plural:
+        subtitle = pluralizar_respondent(subtitle)
+    lineas = [subtitle]
+    for doc in documentos:
+        texto = _supplemental_evidence_line_text(doc.get("tipo"), doc.get("titulo"))
+        linea = _set_first_t_text(item_tpl, texto)
+        if plural:
+            linea = pluralizar_respondent(linea)
+        lineas.append(linea)
+    return "".join(lineas)
+
+
+def _build_supplemental_evidence_pages(documentos: list[dict]) -> str:
+    pages_value_tpl = _load("pages_value")
+    blank = _set_first_t_text(pages_value_tpl, "")
+    lineas = [blank]
+    for doc in documentos:
+        info = doc.get("evidencia")
+        if info and info.get("pagina_inicio") and info.get("num_paginas"):
+            inicio = info["pagina_inicio"]
+            fin = inicio + info["num_paginas"] - 1
+            texto = f"Pgs. {inicio}" if inicio == fin else f"Pgs. {inicio}-{fin}"
+            lineas.append(_set_first_t_text(pages_value_tpl, texto))
+        else:
+            lineas.append(blank)
+    return "".join(lineas)
+
+
+def _documentos_se_por_defecto() -> list[dict]:
+    return [{"tipo": "Declaration", "titulo": None}]
+
+
 def _build_category_xml(
     categoria: str,
     pais: str | None,
@@ -175,11 +227,15 @@ def _build_category_xml(
     evidencias: dict | None = None,
     tipo_fee: str | None = None,
     identidades: list[dict] | None = None,
+    documentos_se: list[dict] | None = None,
 ) -> str:
     if categoria == "form_of_identity":
         if not pais:
             raise ValueError("form_of_identity requiere 'pais'")
         return _build_form_of_identity_description(pais, identidades or _identidades_por_defecto())
+
+    if categoria == "supplemental_evidence":
+        return _build_supplemental_evidence_description(documentos_se or _documentos_se_por_defecto(), plural)
 
     frag_names = CATEGORY_FRAGMENTS[categoria]
     parts = [_load(n) for n in frag_names]
@@ -216,11 +272,13 @@ def build_description_cell_content(
     evidencias: dict | None = None,
     tipo_fee: str | None = None,
     identidades: list[dict] | None = None,
+    documentos_se: list[dict] | None = None,
 ) -> str:
     spacer = _load("spacer")
     ordered = [c for c in CATEGORY_ORDER if c in categorias]
     blocks = [
-        _build_category_xml(c, pais, anio_cc, anio_osac, plural, evidencias, tipo_fee, identidades) for c in ordered
+        _build_category_xml(c, pais, anio_cc, anio_osac, plural, evidencias, tipo_fee, identidades, documentos_se)
+        for c in ordered
     ]
     return spacer.join(blocks)
 
@@ -230,6 +288,7 @@ def build_pages_cell_content(
     evidencias: dict | None,
     paginas_fallback: str,
     identidades: list[dict] | None = None,
+    documentos_se: list[dict] | None = None,
 ) -> str:
     """Columna PAGES. Con evidencia adjunta (o identidades con documento
     propio), una línea por cada párrafo INCLUIDO de DESCRIPTION (en blanco
@@ -241,8 +300,9 @@ def build_pages_cell_content(
     con el rango completo del Tab, como antes."""
     pages_value_tpl = _load("pages_value")
     hay_identidades_con_datos = identidades and any(i.get("evidencia") for i in identidades)
+    hay_documentos_se_con_datos = documentos_se and any(d.get("evidencia") for d in documentos_se)
 
-    if not evidencias and not hay_identidades_con_datos:
+    if not evidencias and not hay_identidades_con_datos and not hay_documentos_se_con_datos:
         return _set_first_t_text(pages_value_tpl, f"Pgs. {paginas_fallback}")
 
     blank = _set_first_t_text(pages_value_tpl, "")
@@ -251,6 +311,9 @@ def build_pages_cell_content(
     for cat in ordered:
         if cat == "form_of_identity":
             blocks.append(_build_form_of_identity_pages(identidades or _identidades_por_defecto()))
+            continue
+        if cat == "supplemental_evidence":
+            blocks.append(_build_supplemental_evidence_pages(documentos_se or _documentos_se_por_defecto()))
             continue
         frag_names = CATEGORY_FRAGMENTS[cat]
         items_by_frag_index = {item["frag_index"]: item for item in ITEMS_POR_CATEGORIA.get(cat, [])}
@@ -306,8 +369,11 @@ def build_exhibit_table(tab_groups: list[dict], plural: bool = False) -> str:
             tg.get("evidencias"),
             tg.get("tipo_fee"),
             tg.get("identidades"),
+            tg.get("documentos_se"),
         )
-        pages_xml = build_pages_cell_content(tg["categorias"], tg.get("evidencias"), tg["paginas"], tg.get("identidades"))
+        pages_xml = build_pages_cell_content(
+            tg["categorias"], tg.get("evidencias"), tg["paginas"], tg.get("identidades"), tg.get("documentos_se")
+        )
         row = (
             "<w:tr>"
             f"<w:tc><w:tcPr><w:tcW w:w=\"1265\" w:type=\"dxa\"/></w:tcPr>{letra_xml}</w:tc>"

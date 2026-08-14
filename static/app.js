@@ -2,6 +2,7 @@ let CATALOGOS = null;
 let PLANTILLAS = [];
 let ITEMS_POR_CATEGORIA = {};
 let TIPOS_DOCUMENTO_IDENTIDAD = ["Passport", "Birth Certificate", "ID"];
+let TIPOS_SUPPLEMENTAL_EVIDENCE = ["Declaration", "Psychological Report", "News"];
 let CURRENT_CASE_ID = null;
 let CURRENT_CASE_RIDERS = [];
 let tabCounter = 0;
@@ -39,6 +40,7 @@ async function init() {
   PLANTILLAS = data.plantillas;
   ITEMS_POR_CATEGORIA = data.items_por_categoria || {};
   TIPOS_DOCUMENTO_IDENTIDAD = data.tipos_documento_identidad || TIPOS_DOCUMENTO_IDENTIDAD;
+  TIPOS_SUPPLEMENTAL_EVIDENCE = data.tipos_supplemental_evidence || TIPOS_SUPPLEMENTAL_EVIDENCE;
 
   fillDatalist("dlCorteSede", CATALOGOS.corte_sede);
   fillDatalist("dlJuez", CATALOGOS.juez);
@@ -264,13 +266,17 @@ async function addTabRow() {
     </div>
     <div class="identidades-tab" style="margin-top:10px;"></div>
     <div class="documentos-tab" style="margin-top:10px;"></div>
+    <div class="documentos-se-tab" style="margin-top:10px;"></div>
   `;
   $("#tabsList").appendChild(div);
   div._identidadesEvidencia = {};
+  div._documentosSE = []; // [{ id, tipo, titulo, evidencia_id, num_paginas }]
+  div._documentosSECounter = 0;
 
   const formOfIdentityCheck = div.querySelector('.cat-check[data-cat="form_of_identity"]');
   const countryConditionsCheck = div.querySelector('.cat-check[data-cat="country_conditions"]');
   const feeCheck = div.querySelector('.cat-check[data-cat="fee"]');
+  const supplementalEvidenceCheck = div.querySelector('.cat-check[data-cat="supplemental_evidence"]');
   const paisField = div.querySelector(".pais-field");
   const anioFields = div.querySelector(".anio-fields");
   const tipoFeeField = div.querySelector(".tipo-fee-field");
@@ -280,6 +286,7 @@ async function addTabRow() {
     tipoFeeField.style.display = feeCheck.checked ? "block" : "none";
     renderIdentidadesUploads(div);
     renderDocumentUploads(div);
+    renderDocumentosSE(div);
   };
   for (const chk of div.querySelectorAll(".cat-check")) {
     chk.addEventListener("change", actualizarCampos);
@@ -287,6 +294,7 @@ async function addTabRow() {
 
   renderIdentidadesUploads(div);
   renderDocumentUploads(div);
+  renderDocumentosSE(div);
   recalcularPaginas();
 }
 
@@ -458,6 +466,139 @@ async function onDocumentUpload(card, input) {
   }
 }
 
+/** Reconstruye la lista libre de documentos de Supplemental Evidence (0 a
+ * N, típicamente 5-10): cada uno con su tipo (Declaration / Psychological
+ * Report / News), su archivo, y — si es News — el título de la noticia
+ * (se sugiere solo al subir el archivo, pero siempre editable). */
+function renderDocumentosSE(card) {
+  const cont = card.querySelector(".documentos-se-tab");
+  const categorias = categoriasMarcadas(card);
+  card._documentosSE = card._documentosSE || [];
+
+  if (!categorias.includes("supplemental_evidence")) {
+    cont.innerHTML = "";
+    return;
+  }
+
+  if (card._documentosSE.length === 0) {
+    agregarDocumentoSE(card, false);
+  }
+
+  cont.innerHTML =
+    `<div class="row" style="justify-content:space-between;">
+      <label style="font-size:13px; font-weight:600; color:var(--text-dim);">Documentos de Supplemental Evidence (normalmente entre 5 y 10)</label>
+      <button type="button" class="btn-agregar-doc-se">+ Agregar documento</button>
+    </div>` +
+    card._documentosSE
+      .map(
+        (doc) => `
+      <div class="tab-card doc-se-row" data-doc-id="${doc.id}" style="margin-top:8px;">
+        <div class="grid">
+          <div class="field">
+            <label style="font-weight:400;">Tipo de documento</label>
+            <select class="doc-se-tipo" data-doc-id="${doc.id}">
+              ${TIPOS_SUPPLEMENTAL_EVIDENCE.map(
+                (t) => `<option value="${escapeHtml(t)}" ${t === doc.tipo ? "selected" : ""}>${escapeHtml(t)}</option>`
+              ).join("")}
+            </select>
+          </div>
+          <div class="field">
+            <label style="font-weight:400;">Archivo (PDF)</label>
+            <input type="file" class="doc-se-upload-input" data-doc-id="${doc.id}" accept="application/pdf">
+            <span class="muted doc-se-upload-status" data-doc-id="${doc.id}"></span>
+          </div>
+        </div>
+        <div class="field doc-se-titulo-field" data-doc-id="${doc.id}" style="display:${doc.tipo === "News" ? "block" : "none"}; margin-top:6px;">
+          <label style="font-weight:400;">Título de la noticia</label>
+          <input type="text" class="doc-se-titulo" data-doc-id="${doc.id}" value="${escapeHtml(doc.titulo || "")}" placeholder="ej. extortionists caught">
+        </div>
+        <button type="button" class="danger doc-se-quitar" data-doc-id="${doc.id}" style="margin-top:6px;">Quitar documento</button>
+      </div>`
+      )
+      .join("");
+
+  cont.querySelector(".btn-agregar-doc-se").addEventListener("click", () => {
+    agregarDocumentoSE(card, true);
+    renderDocumentosSE(card);
+    recalcularPaginas();
+  });
+
+  for (const sel of cont.querySelectorAll(".doc-se-tipo")) {
+    sel.addEventListener("change", () => {
+      const doc = card._documentosSE.find((d) => d.id === sel.dataset.docId);
+      if (doc) doc.tipo = sel.value;
+      const tituloField = cont.querySelector(`.doc-se-titulo-field[data-doc-id="${sel.dataset.docId}"]`);
+      if (tituloField) tituloField.style.display = sel.value === "News" ? "block" : "none";
+    });
+  }
+  for (const inp of cont.querySelectorAll(".doc-se-titulo")) {
+    inp.addEventListener("input", () => {
+      const doc = card._documentosSE.find((d) => d.id === inp.dataset.docId);
+      if (doc) doc.titulo = inp.value;
+    });
+  }
+  for (const input of cont.querySelectorAll(".doc-se-upload-input")) {
+    input.addEventListener("change", () => onDocumentoSEUpload(card, input));
+  }
+  for (const btn of cont.querySelectorAll(".doc-se-quitar")) {
+    btn.addEventListener("click", () => {
+      card._documentosSE = card._documentosSE.filter((d) => d.id !== btn.dataset.docId);
+      renderDocumentosSE(card);
+      recalcularPaginas();
+    });
+  }
+}
+
+function agregarDocumentoSE(card, conRender) {
+  card._documentosSECounter = (card._documentosSECounter || 0) + 1;
+  card._documentosSE.push({
+    id: `se_${card.dataset.n}_${card._documentosSECounter}`,
+    tipo: "Declaration",
+    titulo: "",
+    evidencia_id: null,
+    num_paginas: null,
+  });
+  if (conRender) renderDocumentosSE(card);
+}
+
+async function onDocumentoSEUpload(card, input) {
+  const docId = input.dataset.docId;
+  const doc = card._documentosSE.find((d) => d.id === docId);
+  const statusEl = card.querySelector(`.doc-se-upload-status[data-doc-id="${docId}"]`);
+  const file = input.files[0];
+  if (!doc) return;
+  if (!file) {
+    doc.evidencia_id = null;
+    doc.num_paginas = null;
+    statusEl.textContent = "";
+    recalcularPaginas();
+    return;
+  }
+  statusEl.textContent = "Subiendo…";
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("tipo", doc.tipo === "News" ? "news" : "supplemental_evidence");
+    const res = await fetch("/api/evidencia", { method: "POST", body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Error al subir el archivo");
+    doc.evidencia_id = data.evidencia_id;
+    doc.num_paginas = data.num_paginas;
+    statusEl.textContent = `${data.num_paginas} página(s).`;
+    if (doc.tipo === "News" && data.titulo_sugerido && !doc.titulo) {
+      doc.titulo = data.titulo_sugerido;
+      const tituloInput = card.querySelector(`.doc-se-titulo[data-doc-id="${docId}"]`);
+      if (tituloInput) tituloInput.value = data.titulo_sugerido;
+    }
+    recalcularPaginas();
+  } catch (e) {
+    statusEl.textContent = "Error: " + e.message;
+    input.value = "";
+    doc.evidencia_id = null;
+    doc.num_paginas = null;
+  }
+}
+
 /** Recalcula, en orden (Tab por Tab, categoría por categoría, documento por
  * documento), la página de inicio de cada documento subido — encadenado
  * desde la "página inicial de este lote" que confirma el usuario. Actualiza
@@ -483,6 +624,18 @@ function recalcularPaginas() {
           const inicioDoc = pagina;
           pagina += info.num_paginas;
           if (statusEl) statusEl.textContent = `${info.num_paginas} página(s) — empieza en la página ${inicioDoc}.`;
+        }
+        continue;
+      }
+      if (cat === "supplemental_evidence") {
+        for (const doc of card._documentosSE || []) {
+          const statusEl = card.querySelector(`.doc-se-upload-status[data-doc-id="${doc.id}"]`);
+          if (!doc.evidencia_id) continue;
+          huboDocumento = true;
+          if (inicioTab === null) inicioTab = pagina;
+          const inicioDoc = pagina;
+          pagina += doc.num_paginas;
+          if (statusEl) statusEl.textContent = `${doc.num_paginas} página(s) — empieza en la página ${inicioDoc}.`;
         }
         continue;
       }
@@ -543,7 +696,14 @@ function collectExhibits() {
           };
         })
       : [];
-    return { letra, paginas, categorias, pais, anio_cc, anio_osac, tipo_fee, evidencias, identidades };
+    const documentos_se = categorias.includes("supplemental_evidence")
+      ? (card._documentosSE || []).map((doc) => ({
+          tipo: doc.tipo,
+          titulo: doc.titulo || null,
+          evidencia_id: doc.evidencia_id,
+        }))
+      : [];
+    return { letra, paginas, categorias, pais, anio_cc, anio_osac, tipo_fee, evidencias, identidades, documentos_se };
   });
 }
 
@@ -585,7 +745,8 @@ async function generarDocumento() {
   const hayEvidencia = exhibits.some(
     (tg) =>
       (tg.evidencias && Object.keys(tg.evidencias).length > 0) ||
-      (tg.identidades || []).some((i) => i.evidencia_id)
+      (tg.identidades || []).some((i) => i.evidencia_id) ||
+      (tg.documentos_se || []).some((d) => d.evidencia_id)
   );
   const separar_por_tab = hayEvidencia ? true : $("#separarPorTab").checked;
   const generar_pdf = hayEvidencia ? true : $("#generarPdf").checked;

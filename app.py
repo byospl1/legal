@@ -18,7 +18,12 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 
 from motor.case_store import CASE_STORE_DIR, list_cases, load_case, next_tab_letra, save_case, siguiente_pagina
-from motor.exhibit_builder import CATEGORY_ORDER, ITEMS_POR_CATEGORIA, TIPOS_DOCUMENTO_IDENTIDAD
+from motor.exhibit_builder import (
+    CATEGORY_ORDER,
+    ITEMS_POR_CATEGORIA,
+    TIPOS_DOCUMENTO_IDENTIDAD,
+    TIPOS_SUPPLEMENTAL_EVIDENCE,
+)
 from motor.fill_engine import FillEngineError, generar_lote
 from motor.pdf_merge import (
     PdfMergeError,
@@ -27,6 +32,7 @@ from motor.pdf_merge import (
     sugerir_anio,
     sugerir_pais,
     sugerir_tipo_fee,
+    sugerir_titulo_noticia,
 )
 from motor.validate import ValidationError
 
@@ -90,6 +96,7 @@ def api_init():
             "salidas": _list_salidas(),
             "items_por_categoria": ITEMS_POR_CATEGORIA,
             "tipos_documento_identidad": TIPOS_DOCUMENTO_IDENTIDAD,
+            "tipos_supplemental_evidence": TIPOS_SUPPLEMENTAL_EVIDENCE,
         }
     )
 
@@ -169,6 +176,11 @@ def api_subir_evidencia():
             respuesta["tipo_fee_sugerido"] = sugerir_tipo_fee(destino)
         except Exception:  # noqa: BLE001
             respuesta["tipo_fee_sugerido"] = None
+    elif tipo == "news":
+        try:
+            respuesta["titulo_sugerido"] = sugerir_titulo_noticia(destino)
+        except Exception:  # noqa: BLE001
+            respuesta["titulo_sugerido"] = None
 
     return jsonify(respuesta)
 
@@ -187,7 +199,13 @@ def _resolver_paginas_evidencia(pagina_inicial_lote: int, exhibits: list[dict]) 
     for tg in exhibits:
         evidencias_ids = tg.get("evidencias") or {}
         identidades = tg.get("identidades") or []
-        if not evidencias_ids and not any(i.get("evidencia_id") for i in identidades):
+        documentos_se = tg.get("documentos_se") or []
+        tiene_algo = (
+            bool(evidencias_ids)
+            or any(i.get("evidencia_id") for i in identidades)
+            or any(d.get("evidencia_id") for d in documentos_se)
+        )
+        if not tiene_algo:
             continue
         categorias = tg.get("categorias") or []
         resueltas: dict[str, dict] = {}
@@ -214,6 +232,26 @@ def _resolver_paginas_evidencia(pagina_inicial_lote: int, exhibits: list[dict]) 
                     ident["evidencia"] = {"pagina_inicio": inicio, "num_paginas": n, "path": info["path"]}
                     pagina += n
                 continue
+            if categoria == "supplemental_evidence":
+                for doc in documentos_se:
+                    evidencia_id = doc.get("evidencia_id")
+                    doc["evidencia"] = None
+                    if not evidencia_id:
+                        continue
+                    info = _EVIDENCIAS.get(evidencia_id)
+                    if not info:
+                        raise FillEngineError(
+                            f"No se encontró un documento de Supplemental Evidence subido en el Tab "
+                            f"{tg.get('letra', '?')} — si reiniciaste el servidor después de subirlo, "
+                            "vuelve a subirlo e intenta de nuevo."
+                        )
+                    n = info["num_paginas"]
+                    inicio = pagina
+                    if inicio_tab is None:
+                        inicio_tab = inicio
+                    doc["evidencia"] = {"pagina_inicio": inicio, "num_paginas": n, "path": info["path"]}
+                    pagina += n
+                continue
             for item in ITEMS_POR_CATEGORIA.get(categoria, []):
                 evidencia_id = evidencias_ids.get(item["key"])
                 if not evidencia_id:
@@ -233,6 +271,7 @@ def _resolver_paginas_evidencia(pagina_inicial_lote: int, exhibits: list[dict]) 
                 pagina += n
         tg["evidencias"] = resueltas
         tg["identidades"] = identidades
+        tg["documentos_se"] = documentos_se
         if inicio_tab is not None:
             fin_tab = pagina - 1
             tg["paginas"] = str(inicio_tab) if inicio_tab == fin_tab else f"{inicio_tab}-{fin_tab}"
@@ -256,7 +295,9 @@ def api_generar():
 
     exhibits = document_instance.get("exhibits") or []
     tiene_evidencia = any(
-        tg.get("evidencias") or any(i.get("evidencia_id") for i in (tg.get("identidades") or []))
+        tg.get("evidencias")
+        or any(i.get("evidencia_id") for i in (tg.get("identidades") or []))
+        or any(d.get("evidencia_id") for d in (tg.get("documentos_se") or []))
         for tg in exhibits
     )
     if tiene_evidencia:
@@ -312,9 +353,13 @@ def api_generar():
 
         evidencias_resueltas = (tab_group or {}).get("evidencias") or {}
         identidades_resueltas = (tab_group or {}).get("identidades") or []
+        documentos_se_resueltos = (tab_group or {}).get("documentos_se") or []
         docs_con_pagina = [(info["pagina_inicio"], info["path"]) for info in evidencias_resueltas.values()]
         docs_con_pagina += [
             (i["evidencia"]["pagina_inicio"], i["evidencia"]["path"]) for i in identidades_resueltas if i.get("evidencia")
+        ]
+        docs_con_pagina += [
+            (d["evidencia"]["pagina_inicio"], d["evidencia"]["path"]) for d in documentos_se_resueltos if d.get("evidencia")
         ]
         if docs_con_pagina and result.pdf_path:
             docs_con_pagina.sort(key=lambda x: x[0])
