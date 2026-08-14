@@ -224,19 +224,15 @@ def _apply_firmas_imagen(document_xml: str, tmp_path: Path, field_map: dict, cas
             doc_pr_id += 1
             image_run = build_inline_image_run(rel_id, width_px, height_px, doc_pr_id)
 
-            content = sdt.content_xml
-            ppr_end = content.find("</w:pPr>")
-            if ppr_end != -1:
-                ppr_end += len("</w:pPr>")
-                new_content = content[:ppr_end] + image_run + "</w:p>"
-            else:
-                popen_end = content.find(">") + 1
-                new_content = content[:popen_end] + image_run + "</w:p>"
-
+            # Los campos de firma se arman como inline (ver
+            # plantillas/webex-motion): el prefijo literal (ej. los tabs que
+            # empujan la línea a su posición) queda FUERA del SDT y nunca se
+            # toca; aquí solo se reemplaza el contenido del propio SDT por
+            # la imagen, igual que el resto de los campos inline.
             prefix = sdt.xml[: sdt.content_start_offset]
             content_close_idx = sdt.content_start_offset + len(sdt.content_xml)
             remainder = sdt.xml[content_close_idx:]
-            replacements.append((sdt.start, sdt.end, prefix + new_content + remainder))
+            replacements.append((sdt.start, sdt.end, prefix + image_run + remainder))
 
     if not replacements:
         return document_xml
