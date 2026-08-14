@@ -248,7 +248,7 @@ async function addTabRow() {
       </div>
     </div>
     <div class="tipo-fee-field field" style="display:none; margin-top:6px; margin-left:24px; max-width:220px;">
-      <label>Tipo de FEE (subtítulo dirá "FEE (Initial)" o "FEE (Annual)")</label>
+      <label>Tipo de FEE (el ítem dirá "...Initial Fee Receipt..." o "...Annual Fee Receipt...")</label>
       <select class="tab-tipo-fee">
         <option value="">— sin especificar —</option>
         <option value="Initial">Initial</option>

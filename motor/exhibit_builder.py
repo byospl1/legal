@@ -156,8 +156,9 @@ def _build_category_xml(
         # "ii. OSAC Crime and Safety Reports," -> "...Reports, {AÑO}"
         parts[2] = _replace_in_first_t(parts[2], "Reports,", f"Reports, {_xml_escape(anio_osac)}")
     elif categoria == "fee" and tipo_fee:
-        # "FEE" -> "FEE (Initial)" / "FEE (Annual)"
-        parts[0] = _replace_in_first_t(parts[0], "FEE", f"FEE ({_xml_escape(tipo_fee)})")
+        # el subtítulo "FEE" no cambia; lo que cambia es el ítem del recibo:
+        # "Respondent's Fee Receipt..." -> "Respondent's Initial Fee Receipt..."
+        parts[1] = _replace_in_first_t(parts[1], "Fee Receipt", f"{_xml_escape(tipo_fee)} Fee Receipt")
 
     incluidos = frag_indices_incluidos(categoria, evidencias)
     return "".join(p for i, p in enumerate(parts) if i in incluidos)

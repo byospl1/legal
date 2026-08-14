@@ -195,13 +195,13 @@ _TIPO_FEE_RE = re.compile(r"\b(initial|annual)\b", re.IGNORECASE)
 
 
 def sugerir_tipo_fee(pdf_path: Path) -> str | None:
-    """Busca "Initial" o "Annual" en el nombre del archivo y, si no
-    aparece ahí, en el texto de la primera página del Fee Receipt — para
-    sugerir si el subtítulo debe decir "FEE (Initial)" o "FEE (Annual)"."""
-    nombre = Path(pdf_path).stem
+    """Busca "Initial" o "Annual" SOLO en el nombre del archivo subido —
+    a diferencia de país/año, el texto de estos recibos suele traer ambas
+    palabras en instrucciones/boilerplate no relacionado, así que escanear
+    el contenido del PDF da falsos positivos. El nombre del archivo (que
+    el propio usuario nombra) es la única señal confiable aquí."""
+    nombre = Path(pdf_path).stem.replace("_", " ").replace("-", " ")
     m = _TIPO_FEE_RE.search(nombre)
-    if not m:
-        m = _TIPO_FEE_RE.search(_extraer_texto_primeras_paginas(pdf_path))
     return m.group(1).capitalize() if m else None
 
 
