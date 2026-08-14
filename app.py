@@ -18,7 +18,7 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 
 from motor.case_store import CASE_STORE_DIR, list_cases, load_case, next_tab_letra, save_case, siguiente_pagina
-from motor.exhibit_builder import CATEGORY_ORDER, ITEMS_POR_CATEGORIA
+from motor.exhibit_builder import CATEGORY_ORDER, ITEMS_POR_CATEGORIA, TIPOS_DOCUMENTO_IDENTIDAD
 from motor.fill_engine import FillEngineError, generar_lote
 from motor.pdf_merge import (
     PdfMergeError,
@@ -89,6 +89,7 @@ def api_init():
             "casos": list_cases(),
             "salidas": _list_salidas(),
             "items_por_categoria": ITEMS_POR_CATEGORIA,
+            "tipos_documento_identidad": TIPOS_DOCUMENTO_IDENTIDAD,
         }
     )
 
@@ -173,25 +174,45 @@ def api_subir_evidencia():
 
 
 def _resolver_paginas_evidencia(pagina_inicial_lote: int, exhibits: list[dict]) -> int:
-    """Para cada Tab con documentos de evidencia adjuntos (uno o más,
-    identificados por el 'key' del ítem dentro de su categoría — ver
-    motor.exhibit_builder.ITEMS_POR_CATEGORIA), calcula la página de inicio
-    de cada documento en orden (categoría, luego ítem dentro de la
-    categoría), continuando desde `pagina_inicial_lote`. Sobrescribe
-    tg['paginas'] con el rango calculado y tg['evidencias'] con la
-    información ya resuelta (página de inicio + ruta) que necesita
-    exhibit_builder para anotar los subtítulos. Devuelve la próxima página
-    disponible después de este lote."""
+    """Para cada Tab con documentos de evidencia adjuntos, calcula la
+    página de inicio de cada documento en orden (categoría, luego ítem/
+    persona dentro de la categoría), continuando desde
+    `pagina_inicial_lote`. Sobrescribe tg['paginas'] con el rango
+    calculado, tg['evidencias'] con la info resuelta de los ítems de
+    catálogo fijo (ver motor.exhibit_builder.ITEMS_POR_CATEGORIA), y cada
+    identidad de tg['identidades'] con su propia 'evidencia' resuelta
+    (Form of Identity tiene un documento por persona, no un catálogo fijo).
+    Devuelve la próxima página disponible después de este lote."""
     pagina = pagina_inicial_lote
     for tg in exhibits:
         evidencias_ids = tg.get("evidencias") or {}
-        if not evidencias_ids:
+        identidades = tg.get("identidades") or []
+        if not evidencias_ids and not any(i.get("evidencia_id") for i in identidades):
             continue
         categorias = tg.get("categorias") or []
         resueltas: dict[str, dict] = {}
         inicio_tab = None
         for categoria in CATEGORY_ORDER:
             if categoria not in categorias:
+                continue
+            if categoria == "form_of_identity":
+                for ident in identidades:
+                    evidencia_id = ident.get("evidencia_id")
+                    ident["evidencia"] = None
+                    if not evidencia_id:
+                        continue
+                    info = _EVIDENCIAS.get(evidencia_id)
+                    if not info:
+                        raise FillEngineError(
+                            f"No se encontró el documento de identidad subido en el Tab {tg.get('letra', '?')} "
+                            "— si reiniciaste el servidor después de subirlo, vuelve a subirlo e intenta de nuevo."
+                        )
+                    n = info["num_paginas"]
+                    inicio = pagina
+                    if inicio_tab is None:
+                        inicio_tab = inicio
+                    ident["evidencia"] = {"pagina_inicio": inicio, "num_paginas": n, "path": info["path"]}
+                    pagina += n
                 continue
             for item in ITEMS_POR_CATEGORIA.get(categoria, []):
                 evidencia_id = evidencias_ids.get(item["key"])
@@ -210,10 +231,11 @@ def _resolver_paginas_evidencia(pagina_inicial_lote: int, exhibits: list[dict]) 
                     inicio_tab = inicio
                 resueltas[item["key"]] = {"pagina_inicio": inicio, "num_paginas": n, "path": info["path"]}
                 pagina += n
-        if resueltas:
+        tg["evidencias"] = resueltas
+        tg["identidades"] = identidades
+        if inicio_tab is not None:
             fin_tab = pagina - 1
             tg["paginas"] = str(inicio_tab) if inicio_tab == fin_tab else f"{inicio_tab}-{fin_tab}"
-            tg["evidencias"] = resueltas
     return pagina
 
 
@@ -233,7 +255,10 @@ def api_generar():
         return jsonify({"error": "Caso no encontrado"}), 404
 
     exhibits = document_instance.get("exhibits") or []
-    tiene_evidencia = any(tg.get("evidencias") for tg in exhibits)
+    tiene_evidencia = any(
+        tg.get("evidencias") or any(i.get("evidencia_id") for i in (tg.get("identidades") or []))
+        for tg in exhibits
+    )
     if tiene_evidencia:
         # insertar evidencia requiere un PDF de portada, y requiere que cada
         # Tab sea su propio archivo (no se puede "insertar después de la
@@ -285,10 +310,16 @@ def api_generar():
             "evidencia_fusionada": False,
         }
 
-        evidencias_resueltas = (tab_group or {}).get("evidencias")
-        if evidencias_resueltas and result.pdf_path:
-            rutas = [info["path"] for info in evidencias_resueltas.values()]
-            pagina_inicial_tab = min(info["pagina_inicio"] for info in evidencias_resueltas.values())
+        evidencias_resueltas = (tab_group or {}).get("evidencias") or {}
+        identidades_resueltas = (tab_group or {}).get("identidades") or []
+        docs_con_pagina = [(info["pagina_inicio"], info["path"]) for info in evidencias_resueltas.values()]
+        docs_con_pagina += [
+            (i["evidencia"]["pagina_inicio"], i["evidencia"]["path"]) for i in identidades_resueltas if i.get("evidencia")
+        ]
+        if docs_con_pagina and result.pdf_path:
+            docs_con_pagina.sort(key=lambda x: x[0])
+            rutas = [ruta for _, ruta in docs_con_pagina]
+            pagina_inicial_tab = docs_con_pagina[0][0]
             try:
                 _out, _ultima, punto_encontrado = combinar_portada_y_evidencia(
                     result.pdf_path, rutas, pagina_inicial_tab, result.pdf_path

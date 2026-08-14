@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from motor.analyze_template import Sdt, extract_top_level_sdts
-from motor.exhibit_builder import build_dividers, build_exhibit_table, pluralizar_respondent
+from motor.exhibit_builder import build_dividers, build_exhibit_table
 from motor.ooxml_utils import merge_runs_in_document_xml, rezip, unpack
 from motor.validate import validate_docx
 
@@ -224,15 +224,22 @@ def _apply_exhibits(document_xml: str, tab_groups: list[dict], plural: bool = Fa
 
 
 def _apply_plural_respondents(document_xml: str) -> str:
-    """Textos fijos de la plantilla ("Respondent" standalone antes de "In
-    Removal Proceedings", y "Respondent's" en el párrafo de Proof of
-    Service) deben decir "Respondents"/"Respondents'" cuando el caso tiene
-    riders. Los ítems de la tabla de exhibits ya se pluralizan aparte, al
-    construirse (ver _apply_exhibits/build_exhibit_table), así que aquí no
-    hace daño repetir el reemplazo — ya no queda "Respondent's" por tocar
-    ahí para cuando se llega a este paso."""
+    """Textos fijos de la plantilla FUERA de la tabla de exhibits:
+    "Respondent" standalone antes de "In Removal Proceedings", y
+    "Respondent's" en el párrafo de Proof of Service. Deben decir
+    "Respondents"/"Respondents'" cuando el caso tiene riders.
+
+    Los ítems de la tabla de exhibits ya se pluralizan (o no, en el caso
+    de Form of Identity, que distingue por persona con "Respondent's" /
+    "Rider's {nombre}" y nunca debe pluralizarse) al construirse — ver
+    _apply_exhibits/build_exhibit_table. Por eso aquí se usa un reemplazo
+    puntual por frase exacta, no un reemplazo genérico de "Respondent's "
+    en todo el documento, que le pisaría el singular correcto a Form of
+    Identity."""
     document_xml = document_xml.replace(">Respondent<", ">Respondents<")
-    document_xml = pluralizar_respondent(document_xml)
+    document_xml = document_xml.replace(
+        "A True Copy of the Respondent’s ", "A True Copy of the Respondents’ "
+    )
     return document_xml
 
 

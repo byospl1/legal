@@ -1,7 +1,9 @@
 let CATALOGOS = null;
 let PLANTILLAS = [];
 let ITEMS_POR_CATEGORIA = {};
+let TIPOS_DOCUMENTO_IDENTIDAD = ["Passport", "Birth Certificate", "ID"];
 let CURRENT_CASE_ID = null;
+let CURRENT_CASE_RIDERS = [];
 let tabCounter = 0;
 
 const CATEGORIA_ORDEN = ["i589_application", "country_conditions", "form_of_identity", "supplemental_evidence", "fee"];
@@ -36,6 +38,7 @@ async function init() {
   CATALOGOS = data.catalogos;
   PLANTILLAS = data.plantillas;
   ITEMS_POR_CATEGORIA = data.items_por_categoria || {};
+  TIPOS_DOCUMENTO_IDENTIDAD = data.tipos_documento_identidad || TIPOS_DOCUMENTO_IDENTIDAD;
 
   fillDatalist("dlCorteSede", CATALOGOS.corte_sede);
   fillDatalist("dlJuez", CATALOGOS.juez);
@@ -75,6 +78,7 @@ function renderSalidas(salidas) {
 
 function clearCaseForm() {
   CURRENT_CASE_ID = null;
+  CURRENT_CASE_RIDERS = [];
   for (const id of ["cliente_nombre", "a_number", "corte_sede", "juez", "proxima_audiencia", "preparador"]) {
     $("#" + id).value = "";
   }
@@ -113,6 +117,7 @@ async function loadCase(caseId) {
   }
   const c = await api(`/api/casos/${caseId}`);
   CURRENT_CASE_ID = c.id;
+  CURRENT_CASE_RIDERS = c.riders || [];
   $("#cliente_nombre").value = c.cliente_nombre || "";
   $("#a_number").value = c.a_number || "";
   $("#corte_sede").value = c.corte_sede || "";
@@ -159,6 +164,8 @@ async function guardarCaso() {
       body: JSON.stringify(caso),
     });
     CURRENT_CASE_ID = saved.id;
+    CURRENT_CASE_RIDERS = saved.riders || [];
+    for (const card of document.querySelectorAll("#tabsList .tab-card")) renderIdentidadesUploads(card);
     status.textContent = `Caso guardado (${saved.id}).`;
     status.className = "muted";
     $("#panelDocumento").style.display = "block";
@@ -255,9 +262,11 @@ async function addTabRow() {
         <option value="Annual">Annual</option>
       </select>
     </div>
+    <div class="identidades-tab" style="margin-top:10px;"></div>
     <div class="documentos-tab" style="margin-top:10px;"></div>
   `;
   $("#tabsList").appendChild(div);
+  div._identidadesEvidencia = {};
 
   const formOfIdentityCheck = div.querySelector('.cat-check[data-cat="form_of_identity"]');
   const countryConditionsCheck = div.querySelector('.cat-check[data-cat="country_conditions"]');
@@ -269,14 +278,97 @@ async function addTabRow() {
     paisField.style.display = formOfIdentityCheck.checked || countryConditionsCheck.checked ? "block" : "none";
     anioFields.style.display = countryConditionsCheck.checked ? "grid" : "none";
     tipoFeeField.style.display = feeCheck.checked ? "block" : "none";
+    renderIdentidadesUploads(div);
     renderDocumentUploads(div);
   };
   for (const chk of div.querySelectorAll(".cat-check")) {
     chk.addEventListener("change", actualizarCampos);
   }
 
+  renderIdentidadesUploads(div);
   renderDocumentUploads(div);
   recalcularPaginas();
+}
+
+function personasDelCaso() {
+  return [
+    { key: "lead", nombre: null, label: "Respondent (líder del caso)" },
+    ...CURRENT_CASE_RIDERS.map((r, i) => ({ key: `rider_${i}`, nombre: r.nombre, label: `Rider: ${r.nombre || "(sin nombre)"}` })),
+  ];
+}
+
+/** Reconstruye las filas "tipo de documento + archivo" de Form of
+ * Identity, una por persona del caso (líder + cada rider) — sin perder
+ * los archivos ya subidos para personas que sigan en la lista. */
+function renderIdentidadesUploads(card) {
+  const cont = card.querySelector(".identidades-tab");
+  const categorias = categoriasMarcadas(card);
+  card._identidadesEvidencia = card._identidadesEvidencia || {};
+
+  if (!categorias.includes("form_of_identity")) {
+    cont.innerHTML = "";
+    return;
+  }
+
+  const personas = personasDelCaso();
+  const keysActivos = new Set(personas.map((p) => p.key));
+  for (const key of Object.keys(card._identidadesEvidencia)) {
+    if (!keysActivos.has(key)) delete card._identidadesEvidencia[key];
+  }
+
+  cont.innerHTML =
+    `<label style="font-size:13px; font-weight:600; color:var(--text-dim);">Documento de identidad por persona (pasaporte, certificado de nacimiento o ID — uno por cada aplicante del caso)</label>` +
+    personas
+      .map(
+        (p) => `
+      <div class="grid" style="margin-top:6px;">
+        <div class="field">
+          <label style="font-weight:400;">${escapeHtml(p.label)} — tipo de documento</label>
+          <select class="identidad-tipo-doc" data-persona-key="${p.key}">
+            ${TIPOS_DOCUMENTO_IDENTIDAD.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="field">
+          <label style="font-weight:400;">Archivo (PDF)</label>
+          <input type="file" class="identidad-upload-input" data-persona-key="${p.key}" accept="application/pdf">
+          <span class="muted identidad-upload-status" data-persona-key="${p.key}"></span>
+        </div>
+      </div>`
+      )
+      .join("");
+
+  for (const input of cont.querySelectorAll(".identidad-upload-input")) {
+    input.addEventListener("change", () => onIdentidadUpload(card, input));
+  }
+}
+
+async function onIdentidadUpload(card, input) {
+  const key = input.dataset.personaKey;
+  const statusEl = card.querySelector(`.identidad-upload-status[data-persona-key="${key}"]`);
+  const file = input.files[0];
+  card._identidadesEvidencia = card._identidadesEvidencia || {};
+  if (!file) {
+    delete card._identidadesEvidencia[key];
+    statusEl.textContent = "";
+    recalcularPaginas();
+    return;
+  }
+  statusEl.textContent = "Subiendo…";
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("tipo", "identidad");
+    const res = await fetch("/api/evidencia", { method: "POST", body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Error al subir el archivo");
+    card._identidadesEvidencia[key] = { evidencia_id: data.evidencia_id, num_paginas: data.num_paginas };
+    statusEl.textContent = `${data.num_paginas} página(s).`;
+    recalcularPaginas();
+  } catch (e) {
+    statusEl.textContent = "Error: " + e.message;
+    input.value = "";
+    delete card._identidadesEvidencia[key];
+  }
 }
 
 function categoriasMarcadas(card) {
@@ -381,6 +473,19 @@ function recalcularPaginas() {
 
     for (const cat of CATEGORIA_ORDEN) {
       if (!categorias.includes(cat)) continue;
+      if (cat === "form_of_identity") {
+        for (const persona of personasDelCaso()) {
+          const info = (card._identidadesEvidencia || {})[persona.key];
+          const statusEl = card.querySelector(`.identidad-upload-status[data-persona-key="${persona.key}"]`);
+          if (!info) continue;
+          huboDocumento = true;
+          if (inicioTab === null) inicioTab = pagina;
+          const inicioDoc = pagina;
+          pagina += info.num_paginas;
+          if (statusEl) statusEl.textContent = `${info.num_paginas} página(s) — empieza en la página ${inicioDoc}.`;
+        }
+        continue;
+      }
       for (const item of ITEMS_POR_CATEGORIA[cat] || []) {
         const info = card._evidencias[item.key];
         const statusEl = card.querySelector(`.doc-upload-status[data-item-key="${item.key}"]`);
@@ -427,7 +532,18 @@ function collectExhibits() {
     for (const [key, info] of Object.entries(card._evidencias || {})) {
       evidencias[key] = info.evidencia_id;
     }
-    return { letra, paginas, categorias, pais, anio_cc, anio_osac, tipo_fee, evidencias };
+    const identidades = categorias.includes("form_of_identity")
+      ? personasDelCaso().map((p) => {
+          const tipoDocSel = card.querySelector(`.identidad-tipo-doc[data-persona-key="${p.key}"]`);
+          const info = (card._identidadesEvidencia || {})[p.key];
+          return {
+            persona_nombre: p.nombre,
+            tipo_doc: tipoDocSel ? tipoDocSel.value : "Passport",
+            evidencia_id: info ? info.evidencia_id : null,
+          };
+        })
+      : [];
+    return { letra, paginas, categorias, pais, anio_cc, anio_osac, tipo_fee, evidencias, identidades };
   });
 }
 
@@ -466,7 +582,11 @@ async function generarDocumento() {
     titulo: $("#titulo").value,
     exhibits,
   };
-  const hayEvidencia = exhibits.some((tg) => tg.evidencias && Object.keys(tg.evidencias).length > 0);
+  const hayEvidencia = exhibits.some(
+    (tg) =>
+      (tg.evidencias && Object.keys(tg.evidencias).length > 0) ||
+      (tg.identidades || []).some((i) => i.evidencia_id)
+  );
   const separar_por_tab = hayEvidencia ? true : $("#separarPorTab").checked;
   const generar_pdf = hayEvidencia ? true : $("#generarPdf").checked;
   const pagina_inicial_lote = parseInt($("#paginaInicialLote").value, 10) || 1;
