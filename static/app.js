@@ -85,7 +85,7 @@ async function init() {
   fillSelect("abogado", CATALOGOS.abogado, "— elegir —");
 
   $("#plantilla").innerHTML = PLANTILLAS.map(
-    (p) => `<option value="${p.template_id}">${escapeHtml(p.nombre)}</option>`
+    (p) => `<option value="${p.template_id || p.grupo_id}">${escapeHtml(p.nombre)}</option>`
   ).join("");
   onPlantillaChange();
 
@@ -226,9 +226,49 @@ async function guardarCaso() {
   }
 }
 
+/** La plantilla elegida en #plantilla puede ser una plantilla "plana"
+ * (template_id propio) o un GRUPO con varias variantes (ej. "Motion to
+ * Withdraw" -> No Cooperation / Cancelation of Services) — devuelve la
+ * entrada de nivel superior tal cual está en PLANTILLAS. */
+function getPlantillaSeleccionada() {
+  const value = $("#plantilla").value;
+  return PLANTILLAS.find((p) => (p.template_id || p.grupo_id) === value);
+}
+
+/** La plantilla "efectiva" es la que realmente se usa para generar el
+ * documento: si la seleccionada es un grupo, es la variante elegida en
+ * #plantillaVariante (o la primera, por defecto); si no, es ella misma. */
+function getPlantillaEfectiva() {
+  const seleccionada = getPlantillaSeleccionada();
+  if (!seleccionada) return null;
+  if (seleccionada.variantes) {
+    const varianteId = $("#plantillaVariante").value;
+    return seleccionada.variantes.find((v) => v.template_id === varianteId) || seleccionada.variantes[0];
+  }
+  return seleccionada;
+}
+
 function onPlantillaChange() {
-  const templateId = $("#plantilla").value;
-  const plantilla = PLANTILLAS.find((p) => p.template_id === templateId);
+  const seleccionada = getPlantillaSeleccionada();
+  const varianteField = $("#varianteField");
+  const varianteSelect = $("#plantillaVariante");
+
+  if (seleccionada && seleccionada.variantes) {
+    varianteField.style.display = "block";
+    varianteSelect.innerHTML = seleccionada.variantes
+      .map((v) => `<option value="${escapeHtml(v.template_id)}">${escapeHtml(v.nombre)}</option>`)
+      .join("");
+  } else {
+    varianteField.style.display = "none";
+    varianteSelect.innerHTML = "";
+  }
+
+  actualizarUIPlantillaEfectiva();
+}
+
+function actualizarUIPlantillaEfectiva() {
+  const plantilla = getPlantillaEfectiva();
+  const templateId = plantilla ? plantilla.template_id : null;
   const titulos = (CATALOGOS.titulo && CATALOGOS.titulo[templateId]) || [];
   $("#titulo").innerHTML = titulos.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join("");
   $("#exhibitsSection").style.display = plantilla && plantilla.tiene_tabla_exhibits ? "block" : "none";
@@ -245,12 +285,93 @@ function onPlantillaChange() {
     </div>`
     )
     .join("");
+
+  renderMotionExhibitsSection(plantilla);
 }
 
 function collectCamposExtra() {
   const out = {};
   for (const input of document.querySelectorAll("#camposExtraSection .campo-extra")) {
     out[input.dataset.nombre] = input.value.trim();
+  }
+  return out;
+}
+
+// { letra: [{evidencia_id, num_paginas, nombre}, ...] }
+let MOTION_EXHIBITS_EVIDENCIA = {};
+
+/** Reconstruye la sección "Evidencia de los Exhibits" (un uploader por
+ * letra, ej. A/B/C) para plantillas que declaran evidencia_exhibits en su
+ * field_map (Motion to Withdraw) — sin tabla de exhibits dinámica como los
+ * Tabs, cada Exhibit ya tiene letra y descripción fijas. */
+function renderMotionExhibitsSection(plantilla) {
+  const exhibits = (plantilla && plantilla.evidencia_exhibits) || [];
+  const section = $("#motionExhibitsSection");
+  const cont = $("#motionExhibitsList");
+
+  if (exhibits.length === 0) {
+    section.style.display = "none";
+    cont.innerHTML = "";
+    MOTION_EXHIBITS_EVIDENCIA = {};
+    return;
+  }
+
+  section.style.display = "block";
+  const letrasActivas = new Set(exhibits.map((e) => e.letra));
+  for (const letra of Object.keys(MOTION_EXHIBITS_EVIDENCIA)) {
+    if (!letrasActivas.has(letra)) delete MOTION_EXHIBITS_EVIDENCIA[letra];
+  }
+
+  cont.innerHTML = exhibits
+    .map(
+      (e) => `
+    <div class="field" style="margin-top:6px;">
+      <label style="font-weight:400;">Exhibit ${escapeHtml(e.letra)} — ${escapeHtml(e.descripcion)}</label>
+      <input type="file" class="motion-exhibit-upload-input" data-letra="${escapeHtml(e.letra)}" accept="application/pdf" multiple>
+      <span class="muted motion-exhibit-upload-status" data-letra="${escapeHtml(e.letra)}"></span>
+    </div>`
+    )
+    .join("");
+
+  for (const input of cont.querySelectorAll(".motion-exhibit-upload-input")) {
+    input.addEventListener("change", () => onMotionExhibitUpload(input));
+  }
+}
+
+async function onMotionExhibitUpload(input) {
+  const letra = input.dataset.letra;
+  const statusEl = $(`.motion-exhibit-upload-status[data-letra="${letra}"]`);
+  const files = [...input.files];
+  if (files.length === 0) {
+    delete MOTION_EXHIBITS_EVIDENCIA[letra];
+    statusEl.textContent = "";
+    return;
+  }
+  statusEl.textContent = "Subiendo…";
+  const subidos = [];
+  try {
+    for (const file of files) {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/evidencia", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Error al subir ${file.name}`);
+      subidos.push({ evidencia_id: data.evidencia_id, num_paginas: data.num_paginas, nombre: data.nombre });
+    }
+    MOTION_EXHIBITS_EVIDENCIA[letra] = subidos;
+    const totalPaginas = subidos.reduce((sum, s) => sum + s.num_paginas, 0);
+    statusEl.textContent = `${subidos.length} archivo(s), ${totalPaginas} página(s) en total.`;
+  } catch (e) {
+    statusEl.textContent = "Error: " + e.message;
+    input.value = "";
+    delete MOTION_EXHIBITS_EVIDENCIA[letra];
+  }
+}
+
+function collectMotionExhibitsEvidencia() {
+  const out = {};
+  for (const [letra, subidos] of Object.entries(MOTION_EXHIBITS_EVIDENCIA)) {
+    out[letra] = subidos.map((s) => s.evidencia_id);
   }
   return out;
 }
@@ -777,8 +898,8 @@ async function generarDocumento() {
     return;
   }
 
-  const templateId = $("#plantilla").value;
-  const plantilla = PLANTILLAS.find((p) => p.template_id === templateId);
+  const plantilla = getPlantillaEfectiva();
+  const templateId = plantilla ? plantilla.template_id : null;
   const exhibits = plantilla && plantilla.tiene_tabla_exhibits ? collectExhibits() : [];
 
   for (const tg of exhibits) {
@@ -800,6 +921,8 @@ async function generarDocumento() {
     template_id: templateId,
     titulo: $("#titulo").value,
     exhibits,
+    exhibits_evidencia: collectMotionExhibitsEvidencia(),
+    pagina_inicial_exhibits: parseInt($("#motionExhibitsPaginaInicial").value, 10) || 1,
     ...collectCamposExtra(),
   };
   const hayEvidencia = exhibits.some(
@@ -871,6 +994,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#btnNuevoCaso").addEventListener("click", clearCaseForm);
   $("#btnGuardarCaso").addEventListener("click", guardarCaso);
   $("#plantilla").addEventListener("change", onPlantillaChange);
+  $("#plantillaVariante").addEventListener("change", actualizarUIPlantillaEfectiva);
   $("#btnAgregarTab").addEventListener("click", addTabRow);
   $("#btnAgregarRider").addEventListener("click", () => addRiderRow());
   $("#btnGenerar").addEventListener("click", generarDocumento);

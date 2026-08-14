@@ -98,6 +98,10 @@
         <label>Plantilla</label>
         <select id="plantilla"></select>
       </div>
+      <div class="field" id="varianteField" style="display:none;">
+        <label>Variante</label>
+        <select id="plantillaVariante"></select>
+      </div>
       <div class="field">
         <label>Título del documento</label>
         <select id="titulo"></select>
@@ -105,6 +109,16 @@
     </div>
 
     <div id="camposExtraSection" class="grid" style="margin-top:16px; display:none;"></div>
+
+    <div id="motionExhibitsSection" style="margin-top:20px; display:none;">
+      <strong style="font-size:14px;">Evidencia de los Exhibits</strong>
+      <p class="subtitle" style="margin-top:4px;">Sube el PDF de cada Exhibit (opcional, puedes subir varios archivos por Exhibit) — se insertan después de la página "EXHIBIT {letra}" y se numeran solos.</p>
+      <div class="field" style="max-width:280px; margin-bottom:10px;">
+        <label>¿En qué página empieza la evidencia de esta moción?</label>
+        <input type="number" id="motionExhibitsPaginaInicial" min="1" value="1">
+      </div>
+      <div id="motionExhibitsList"></div>
+    </div>
 
     <div id="exhibitsSection" style="margin-top:20px;">
       <div class="row" style="justify-content:space-between;">

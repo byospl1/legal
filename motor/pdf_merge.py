@@ -163,6 +163,104 @@ def combinar_portada_y_evidencia(
     return out_path, ultima_pagina, punto_encontrado
 
 
+def _localizar_paginas_exhibits(portada_reader: PdfReader, letras: list[str]) -> dict[str, int]:
+    """Para cada letra pedida, el índice (0-based) de su página divisoria
+    "EXHIBIT {letra}" dentro del PDF de portada ya convertido — la
+    evidencia de esa letra se inserta INMEDIATAMENTE DESPUÉS de esa
+    página. Coincide por substring (no exacto) porque las comillas
+    tipográficas ("EXHIBIT “A”") pueden extraerse distinto según el
+    conversor de PDF."""
+    pendientes = {letra: f"EXHIBIT {letra}".upper() for letra in letras}
+    encontrados: dict[str, int] = {}
+    for i, page in enumerate(portada_reader.pages):
+        if not pendientes:
+            break
+        try:
+            texto = (page.extract_text() or "").upper()
+        except Exception:  # noqa: BLE001
+            texto = ""
+        for letra, marcador in list(pendientes.items()):
+            if marcador in texto:
+                encontrados[letra] = i
+                del pendientes[letra]
+    return encontrados
+
+
+def combinar_portada_y_evidencia_exhibits(
+    portada_pdf: Path,
+    evidencia_por_letra: dict[str, list[Path]],
+    pagina_inicial: int,
+    out_path: Path,
+) -> tuple[Path, int, list[str]]:
+    """Como combinar_portada_y_evidencia, pero para plantillas con VARIOS
+    puntos de inserción con nombre (un Exhibit por letra) en vez de un solo
+    punto fijo antes de "PROOF OF SERVICE" — ej. Motion to Withdraw, que
+    trae Exhibits A/B/C (o B/C/D) cada uno con su propia página divisoria
+    "EXHIBIT {letra}".
+
+    `evidencia_por_letra` es un dict {letra: [pdfs...]} — los PDFs de cada
+    letra se insertan en ese orden, justo después de la página divisoria de
+    esa letra. La numeración de página es continua a través de TODOS los
+    exhibits, en el orden en que aparecen en el documento (no en el orden
+    del dict).
+
+    Devuelve (ruta_del_pdf_final, última_página_usada, letras_no_encontradas)
+    — `letras_no_encontradas` son letras con evidencia pero sin página
+    divisoria localizable en la portada (se avisa, no se bloquea)."""
+    writer = PdfWriter()
+    lectores_evidencia: list[PdfReader] = []
+
+    try:
+        portada_reader = PdfReader(str(portada_pdf))
+        paginas_portada = list(portada_reader.pages)
+    except Exception as e:  # noqa: BLE001
+        raise PdfMergeError(f"No se pudo leer la portada generada '{Path(portada_pdf).name}': {e}")
+
+    letras = [letra for letra, pdfs in evidencia_por_letra.items() if pdfs]
+    anclas = _localizar_paginas_exhibits(portada_reader, letras)
+    no_encontradas = [letra for letra in letras if letra not in anclas]
+    anclas_por_pagina: dict[int, list[str]] = {}
+    for letra, idx in anclas.items():
+        anclas_por_pagina.setdefault(idx, []).append(letra)
+
+    numero = pagina_inicial
+    for i, page in enumerate(paginas_portada):
+        writer.add_page(page)
+        for letra in anclas_por_pagina.get(i, []):
+            for evidencia_pdf in evidencia_por_letra[letra]:
+                try:
+                    reader = PdfReader(str(evidencia_pdf))
+                    lectores_evidencia.append(reader)
+                except Exception as e:  # noqa: BLE001
+                    raise PdfMergeError(f"No se pudo leer el PDF de evidencia '{Path(evidencia_pdf).name}': {e}")
+                for epage in reader.pages:
+                    width = float(epage.mediabox.width)
+                    height = float(epage.mediabox.height)
+                    overlay = _pagina_numero_overlay(width, height, numero)
+                    epage.merge_page(overlay)
+                    writer.add_page(epage)
+                    numero += 1
+    ultima_pagina = numero - 1
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=out_path.name + ".", suffix=".tmp", dir=out_path.parent)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            writer.write(f)
+        for reader in (portada_reader, *lectores_evidencia):
+            try:
+                reader.stream.close()
+            except Exception:  # noqa: BLE001
+                pass
+        _replace_with_retry(tmp_path, out_path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+    return out_path, ultima_pagina, no_encontradas
+
+
 # ---------------------------------------------------------------------------
 # Detección heurística de país/año a partir del texto del PDF de evidencia
 # (sugerencia editable — nunca se usa a ciegas sin que el usuario la vea).

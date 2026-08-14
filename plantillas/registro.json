@@ -15,45 +15,51 @@
       "tiene_tabla_exhibits": false
     },
     {
-      "template_id": "motion-withdraw-no-cooperation",
-      "nombre": "Motion to Withdraw — No Cooperation",
-      "archivo": "motion-withdraw-no-cooperation/MOTION_TO_WITHDRAW_NO_COOPERATION.docx",
-      "field_map": "motion-withdraw-no-cooperation/field_map.json",
-      "tiene_tabla_exhibits": false,
-      "campos_extra": [
+      "grupo_id": "motion-withdraw",
+      "nombre": "Motion to Withdraw as Counsel",
+      "variantes": [
         {
-          "nombre": "direccion_conocida",
-          "etiqueta": "Última dirección conocida del cliente",
-          "placeholder": "ej. 7112 Seville Ave, Huntington Park, CA 90255"
+          "template_id": "motion-withdraw-no-cooperation",
+          "nombre": "No Cooperation",
+          "archivo": "motion-withdraw-no-cooperation/MOTION_TO_WITHDRAW_NO_COOPERATION.docx",
+          "field_map": "motion-withdraw-no-cooperation/field_map.json",
+          "tiene_tabla_exhibits": false,
+          "campos_extra": [
+            {
+              "nombre": "direccion_conocida",
+              "etiqueta": "Última dirección conocida del cliente",
+              "placeholder": "ej. 7112 Seville Ave, Huntington Park, CA 90255"
+            },
+            {
+              "nombre": "telefono_conocido",
+              "etiqueta": "Teléfono conocido del cliente",
+              "placeholder": "ej. (562) 440-5200"
+            }
+          ]
         },
         {
-          "nombre": "telefono_conocido",
-          "etiqueta": "Teléfono conocido del cliente",
-          "placeholder": "ej. (562) 440-5200"
-        }
-      ]
-    },
-    {
-      "template_id": "motion-withdraw-cancelation",
-      "nombre": "Motion to Withdraw — Cancelation of Services",
-      "archivo": "motion-withdraw-cancelation/MOTION_TO_WITHDRAW_CANCELATION.docx",
-      "field_map": "motion-withdraw-cancelation/field_map.json",
-      "tiene_tabla_exhibits": false,
-      "campos_extra": [
-        {
-          "nombre": "direccion_anterior",
-          "etiqueta": "Dirección anterior del cliente (donde se envió el Cancelation Request)",
-          "placeholder": "ej. 1777 N. Rademacher St. Detroit, MI 48209"
-        },
-        {
-          "nombre": "direccion_actual",
-          "etiqueta": "Dirección actual del cliente (donde se envió el Disengagement Letter)",
-          "placeholder": "ej. 6119 Eaton St. Hollywood, FL 33024"
-        },
-        {
-          "nombre": "fecha_cancelacion",
-          "etiqueta": "Fecha en que el cliente canceló los servicios",
-          "placeholder": "ej. March 03, 2026"
+          "template_id": "motion-withdraw-cancelation",
+          "nombre": "Cancelation of Services",
+          "archivo": "motion-withdraw-cancelation/MOTION_TO_WITHDRAW_CANCELATION.docx",
+          "field_map": "motion-withdraw-cancelation/field_map.json",
+          "tiene_tabla_exhibits": false,
+          "campos_extra": [
+            {
+              "nombre": "direccion_anterior",
+              "etiqueta": "Dirección anterior del cliente (donde se envió el Cancelation Request)",
+              "placeholder": "ej. 1777 N. Rademacher St. Detroit, MI 48209"
+            },
+            {
+              "nombre": "direccion_actual",
+              "etiqueta": "Dirección actual del cliente (donde se envió el Disengagement Letter)",
+              "placeholder": "ej. 6119 Eaton St. Hollywood, FL 33024"
+            },
+            {
+              "nombre": "fecha_cancelacion",
+              "etiqueta": "Fecha en que el cliente canceló los servicios",
+              "placeholder": "ej. March 03, 2026"
+            }
+          ]
         }
       ]
     }

@@ -28,6 +28,7 @@ from motor.fill_engine import FillEngineError, generar_lote
 from motor.pdf_merge import (
     PdfMergeError,
     combinar_portada_y_evidencia,
+    combinar_portada_y_evidencia_exhibits,
     contar_paginas,
     sugerir_anio,
     sugerir_pais,
@@ -60,8 +61,34 @@ def _catalogos() -> dict:
     return json.loads((BASE_DIR / "catalogos.json").read_text(encoding="utf-8"))
 
 
+def _con_evidencia_exhibits(entry: dict) -> dict:
+    """Adjunta `evidencia_exhibits` (letra + descripción de cada Exhibit
+    que acepta un PDF subido, ej. Motion to Withdraw) leyéndolo del
+    field_map.json de la plantilla — vive ahí como única fuente de verdad
+    en vez de duplicarse en registro.json."""
+    field_map_rel = entry.get("field_map")
+    if not field_map_rel:
+        return entry
+    field_map_path = PLANTILLAS_DIR / field_map_rel
+    if not field_map_path.exists():
+        return entry
+    field_map = json.loads(field_map_path.read_text(encoding="utf-8"))
+    if field_map.get("evidencia_exhibits"):
+        entry = {**entry, "evidencia_exhibits": field_map["evidencia_exhibits"]}
+    return entry
+
+
 def _registro_plantillas() -> dict:
-    return json.loads((PLANTILLAS_DIR / "registro.json").read_text(encoding="utf-8"))
+    registro = json.loads((PLANTILLAS_DIR / "registro.json").read_text(encoding="utf-8"))
+    plantillas = []
+    for entry in registro["plantillas"]:
+        if "variantes" in entry:
+            entry = {**entry, "variantes": [_con_evidencia_exhibits(v) for v in entry["variantes"]]}
+        else:
+            entry = _con_evidencia_exhibits(entry)
+        plantillas.append(entry)
+    registro["plantillas"] = plantillas
+    return registro
 
 
 def _list_salidas() -> list[dict]:
@@ -188,6 +215,16 @@ def api_subir_evidencia():
             respuesta["titulo_sugerido"] = None
 
     return jsonify(respuesta)
+
+
+def _ruta_evidencia(evidencia_id: str) -> Path:
+    info = _EVIDENCIAS.get(evidencia_id)
+    if not info:
+        raise FillEngineError(
+            "No se encontró uno de los PDFs de evidencia subidos — si reiniciaste el servidor después de "
+            "subirlo, vuelve a subirlo e intenta de nuevo."
+        )
+    return info["path"]
 
 
 def _resolver_paginas_evidencia(pagina_inicial_lote: int, exhibits: list[dict]) -> int:
@@ -320,6 +357,20 @@ def api_generar():
             return jsonify({"error": str(e)}), 400
         case["siguiente_pagina"] = nueva_siguiente
 
+    # Motion to Withdraw (y cualquier plantilla sin tabla de exhibits): un
+    # PDF de evidencia por Exhibit con nombre (letra), en vez de los Tabs
+    # dinámicos de arriba — ver _resolver_exhibits_evidencia.
+    exhibits_evidencia_ids = document_instance.get("exhibits_evidencia") or {}
+    exhibits_evidencia_ids = {letra: ids for letra, ids in exhibits_evidencia_ids.items() if ids}
+    if exhibits_evidencia_ids:
+        generar_pdf = True
+        try:
+            exhibits_evidencia_rutas = {
+                letra: [_ruta_evidencia(eid) for eid in ids] for letra, ids in exhibits_evidencia_ids.items()
+            }
+        except FillEngineError as e:
+            return jsonify({"error": str(e)}), 400
+
     try:
         resultados = generar_lote(
             case,
@@ -380,6 +431,23 @@ def api_generar():
                         "No se encontró la página 'PROOF OF SERVICE' en el PDF generado — la evidencia "
                         "quedó insertada al final del documento en vez de después de la divisoria. "
                         "Revísalo antes de usarlo."
+                    )
+            except PdfMergeError as e:
+                entry["evidencia_error"] = str(e)
+
+        if exhibits_evidencia_ids and result.pdf_path:
+            pagina_inicial_exhibits = document_instance.get("pagina_inicial_exhibits")
+            if not isinstance(pagina_inicial_exhibits, int) or pagina_inicial_exhibits < 1:
+                pagina_inicial_exhibits = 1
+            try:
+                _out, _ultima, no_encontradas = combinar_portada_y_evidencia_exhibits(
+                    result.pdf_path, exhibits_evidencia_rutas, pagina_inicial_exhibits, result.pdf_path
+                )
+                entry["evidencia_fusionada"] = True
+                if no_encontradas:
+                    entry["evidencia_error"] = (
+                        "No se encontró la página divisoria de estos Exhibits en el PDF generado, así que su "
+                        f"evidencia no se pudo insertar: {', '.join(no_encontradas)}. Revísalo antes de usarlo."
                     )
             except PdfMergeError as e:
                 entry["evidencia_error"] = str(e)
