@@ -163,26 +163,44 @@ def combinar_portada_y_evidencia(
     return out_path, ultima_pagina, punto_encontrado
 
 
+def _solo_letras(texto: str) -> str:
+    """Deja únicamente las letras A-Z en mayúscula. Sirve para reconocer una
+    página divisoria sin depender de cómo el conversor extraiga las comillas
+    tipográficas (“EXHIBIT A”), los espacios, la numeración de renglones del
+    margen (1..28) ni el número de página del pie (-4-): todo eso son
+    dígitos, signos o espacios y desaparece aquí."""
+    return re.sub(r"[^A-Za-z]", "", texto).upper()
+
+
 def _localizar_paginas_exhibits(portada_reader: PdfReader, letras: list[str]) -> dict[str, int]:
     """Para cada letra pedida, el índice (0-based) de su página divisoria
-    "EXHIBIT {letra}" dentro del PDF de portada ya convertido — la
-    evidencia de esa letra se inserta INMEDIATAMENTE DESPUÉS de esa
-    página. Coincide por substring (no exacto) porque las comillas
-    tipográficas ("EXHIBIT “A”") pueden extraerse distinto según el
-    conversor de PDF."""
-    pendientes = {letra: f"EXHIBIT {letra}".upper() for letra in letras}
+    "EXHIBIT {letra}" dentro del PDF de portada ya convertido — la evidencia
+    de esa letra se inserta INMEDIATAMENTE DESPUÉS de esa página.
+
+    El match es ESTRICTO: la página entera, quitándole dígitos y signos, debe
+    ser exactamente "EXHIBITX". Un `in` por substring NO sirve aquí y es
+    peligroso: el párrafo NOTICE del cuerpo de la moción cita los exhibits
+    por nombre ("...(Exhibit A), Disengagement Letter (...as Exhibit B), y
+    ...(Exhibit C)"), así que un substring hace que la primera coincidencia
+    de A, B y C caiga en la página del NOTICE y toda la evidencia se
+    inserte a media moción en vez de después de su divisoria.
+
+    Si una letra no se encuentra, no se adivina: se reporta como faltante
+    (ver combinar_portada_y_evidencia_exhibits) — en un documento que se
+    presenta ante la corte, avisar es mejor que insertar en el lugar
+    equivocado."""
+    objetivos = {letra: _solo_letras(f"EXHIBIT{letra}") for letra in letras}
     encontrados: dict[str, int] = {}
     for i, page in enumerate(portada_reader.pages):
-        if not pendientes:
+        if len(encontrados) == len(objetivos):
             break
         try:
-            texto = (page.extract_text() or "").upper()
+            texto = _solo_letras(page.extract_text() or "")
         except Exception:  # noqa: BLE001
-            texto = ""
-        for letra, marcador in list(pendientes.items()):
-            if marcador in texto:
+            continue
+        for letra, objetivo in objetivos.items():
+            if letra not in encontrados and texto == objetivo:
                 encontrados[letra] = i
-                del pendientes[letra]
     return encontrados
 
 

@@ -97,55 +97,92 @@ def _find_pdftoppm() -> str:
     )
 
 
-def _convert_with_word(docx_path: Path, out_dir: Path) -> Path:
+# El trabajo con Word se hace en un PROCESO APARTE a propósito. Word por COM
+# puede quedarse colgado indefinidamente (típicamente por un WINWORD.EXE que
+# quedó vivo de una corrida anterior y se queda esperando un diálogo que
+# nadie ve, porque la ventana está oculta). Si eso pasara dentro del propio
+# servidor, la petición nunca respondería y el navegador solo diría "Failed
+# to fetch", sin ninguna pista. En un subproceso sí se le puede poner
+# tiempo límite y matarlo, y así devolver un error entendible.
+# Códigos de salida: 0 = OK, 3 = Word/pywin32 no disponible (hay que caer a
+# LibreOffice), cualquier otro = falló la conversión.
+_WORD_CONVERT_SCRIPT = r"""
+import sys
+
+try:
+    import pythoncom
+    import win32com.client
+except ImportError:
+    sys.exit(3)
+
+docx_path, pdf_path = sys.argv[1], sys.argv[2]
+
+pythoncom.CoInitialize()
+word = None
+doc = None
+try:
+    try:
+        word = win32com.client.DispatchEx("Word.Application")
+    except Exception:
+        sys.exit(3)
+    word.Visible = False
+    word.DisplayAlerts = 0
+    doc = word.Documents.Open(
+        docx_path, ReadOnly=True, AddToRecentFiles=False, ConfirmConversions=False
+    )
+    doc.SaveAs(pdf_path, FileFormat=17)
+finally:
+    if doc is not None:
+        try:
+            doc.Close(False)
+        except Exception:
+            pass
+    if word is not None:
+        try:
+            word.Quit()
+        except Exception:
+            pass
+    pythoncom.CoUninitialize()
+"""
+
+
+def _convert_with_word(docx_path: Path, out_dir: Path, timeout: int = 180) -> Path:
     """Convierte usando Microsoft Word (COM). Fidelidad exacta — es el
     mismo motor de renderizado que ves al abrir el archivo en Word."""
-    try:
-        import pythoncom
-        import win32com.client
-    except ImportError as e:
-        raise WordNotAvailableError(f"pywin32 no está instalado: {e}")
+    import sys
 
     out_dir.mkdir(parents=True, exist_ok=True)
     pdf_path = out_dir / (docx_path.stem + ".pdf")
 
-    pythoncom.CoInitialize()
-    word = None
-    doc = None
     try:
-        try:
-            word = win32com.client.DispatchEx("Word.Application")
-        except Exception as e:  # noqa: BLE001
-            raise WordNotAvailableError(f"No se pudo iniciar Microsoft Word (¿está instalado?): {e}")
-
-        word.Visible = False
-        word.DisplayAlerts = 0
-        try:
-            doc = word.Documents.Open(
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                _WORD_CONVERT_SCRIPT,
                 str(docx_path.resolve()),
-                ReadOnly=True,
-                AddToRecentFiles=False,
-                ConfirmConversions=False,
-            )
-            wd_format_pdf = 17
-            doc.SaveAs(str(pdf_path.resolve()), FileFormat=wd_format_pdf)
-        except WordNotAvailableError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            raise PdfToolsError(f"Word abrió pero falló al convertir '{docx_path.name}' a PDF: {e}")
-    finally:
-        if doc is not None:
-            try:
-                doc.Close(False)
-            except Exception:  # noqa: BLE001
-                pass
-        if word is not None:
-            try:
-                word.Quit()
-            except Exception:  # noqa: BLE001
-                pass
-        pythoncom.CoUninitialize()
+                str(pdf_path.resolve()),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise PdfToolsError(
+            f"Word se quedó colgado más de {timeout} segundos convirtiendo "
+            f"'{docx_path.name}' a PDF, así que se canceló. Casi siempre es un Word "
+            "que quedó abierto o trabado de una corrida anterior: abre el "
+            "Administrador de tareas (Ctrl+Shift+Esc), termina todos los procesos "
+            "WINWORD.EXE que veas, y vuelve a intentar. El .docx ya se generó bien; "
+            "lo único que faltó fue el PDF."
+        )
 
+    if result.returncode == 3:
+        raise WordNotAvailableError("Word/pywin32 no está disponible en esta máquina")
+    if result.returncode != 0:
+        raise PdfToolsError(
+            f"Word falló al convertir '{docx_path.name}' a PDF: {result.stderr.strip() or result.stdout.strip()}"
+        )
     if not pdf_path.exists():
         raise PdfToolsError("Word no generó el archivo PDF esperado.")
     return pdf_path

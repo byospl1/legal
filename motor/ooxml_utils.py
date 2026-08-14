@@ -306,7 +306,6 @@ def _ensure_png_content_type(tmp_path: Path) -> None:
     if 'Extension="png"' in ct_xml or 'Extension="PNG"' in ct_xml:
         return
     new_default = '<Default Extension="png" ContentType="image/png"/>'
-    ct_xml = ct_xml.replace("<Types ", "<Types ", 1)
     insert_at = ct_xml.index(">", ct_xml.index("<Types ")) + 1
     ct_xml = ct_xml[:insert_at] + new_default + ct_xml[insert_at:]
     ct_path.write_text(ct_xml, encoding="utf-8")
