@@ -12,13 +12,13 @@ original (ver plantillas/i589-tab-cover/fragments/), siguiendo las secciones
   de centrado vertical), párrafo del título "EXHIBIT {letra}".
 
 Cada categoría puede traer más de un documento de evidencia (ej. Country
-Conditions = reporte de país + reporte OSAC, cada uno su propio PDF). Cuando
-hay evidencia adjunta, la columna PAGES se construye en paralelo a la
-columna DESCRIPTION, línea por línea: cada línea de ítem (i., ii., etc.)
-muestra el rango de páginas de SU documento; las líneas de subtítulo y los
-espaciadores quedan en blanco en esa columna. Sin evidencia adjunta (modo
-manual), la columna PAGES muestra una sola línea con el rango completo del
-Tab, como antes.
+Conditions = reporte de país + reporte OSAC; Fee = fee receipt + FBI
+fingerprint). Cuando hay evidencia adjunta para AL MENOS UNO de los
+documentos de una categoría, solo se incluyen en DESCRIPTION (y en la
+columna PAGES, en paralelo) los ítems que sí tienen archivo — si solo se
+sube el Fee Receipt, se omite el ítem de FBI Fingerprint, y viceversa. Sin
+evidencia adjunta para ninguno de los ítems de la categoría, se incluyen
+todos (modo manual, como antes).
 """
 
 from __future__ import annotations
@@ -102,8 +102,35 @@ def pluralizar_respondent(xml: str) -> str:
     return xml
 
 
+def frag_indices_incluidos(categoria: str, evidencias: dict | None) -> set[int]:
+    """Índices (dentro de CATEGORY_FRAGMENTS[categoria]) que deben incluirse
+    en DESCRIPTION y PAGES. Los subtítulos (índices que no son de ningún
+    ítem) siempre se incluyen. Entre los ítems: si NINGUNO de los de esta
+    categoría tiene evidencia adjunta, se incluyen todos (modo manual). Si
+    AL MENOS UNO la tiene, solo se incluyen los que sí tienen archivo."""
+    frag_names = CATEGORY_FRAGMENTS[categoria]
+    items = ITEMS_POR_CATEGORIA.get(categoria, [])
+    item_frag_indices = {item["frag_index"] for item in items}
+    subtitle_indices = set(range(len(frag_names))) - item_frag_indices
+
+    if not evidencias:
+        return set(range(len(frag_names)))
+
+    incluidos_items = {item["frag_index"] for item in items if item["key"] in evidencias}
+    if not incluidos_items:
+        return set(range(len(frag_names)))
+
+    return subtitle_indices | incluidos_items
+
+
 def _build_category_xml(
-    categoria: str, pais: str | None, anio_cc: str | None, anio_osac: str | None, plural: bool = False
+    categoria: str,
+    pais: str | None,
+    anio_cc: str | None,
+    anio_osac: str | None,
+    plural: bool = False,
+    evidencias: dict | None = None,
+    tipo_fee: str | None = None,
 ) -> str:
     frag_names = CATEGORY_FRAGMENTS[categoria]
     parts = [_load(n) for n in frag_names]
@@ -128,7 +155,12 @@ def _build_category_xml(
         parts[1] = _replace_in_first_t(parts[1], "Practice,", f"Practice, {_xml_escape(anio_cc)}")
         # "ii. OSAC Crime and Safety Reports," -> "...Reports, {AÑO}"
         parts[2] = _replace_in_first_t(parts[2], "Reports,", f"Reports, {_xml_escape(anio_osac)}")
-    return "".join(parts)
+    elif categoria == "fee" and tipo_fee:
+        # "FEE" -> "FEE (Initial)" / "FEE (Annual)"
+        parts[0] = _replace_in_first_t(parts[0], "FEE", f"FEE ({_xml_escape(tipo_fee)})")
+
+    incluidos = frag_indices_incluidos(categoria, evidencias)
+    return "".join(p for i, p in enumerate(parts) if i in incluidos)
 
 
 def build_description_cell_content(
@@ -137,19 +169,23 @@ def build_description_cell_content(
     anio_cc: str | None = None,
     anio_osac: str | None = None,
     plural: bool = False,
+    evidencias: dict | None = None,
+    tipo_fee: str | None = None,
 ) -> str:
     spacer = _load("spacer")
     ordered = [c for c in CATEGORY_ORDER if c in categorias]
-    blocks = [_build_category_xml(c, pais, anio_cc, anio_osac, plural) for c in ordered]
+    blocks = [_build_category_xml(c, pais, anio_cc, anio_osac, plural, evidencias, tipo_fee) for c in ordered]
     return spacer.join(blocks)
 
 
 def build_pages_cell_content(categorias: list[str], evidencias: dict | None, paginas_fallback: str) -> str:
-    """Columna PAGES. Con evidencia adjunta, una línea por cada párrafo de
-    DESCRIPTION (en blanco si es subtítulo/no tiene documento propio, con
-    "Pgs. X-Y" si es un ítem con archivo adjunto) — así cada documento
-    muestra su rango justo junto a su línea. Sin evidencia, una sola línea
-    con el rango completo del Tab, como antes."""
+    """Columna PAGES. Con evidencia adjunta, una línea por cada párrafo
+    INCLUIDO de DESCRIPTION (en blanco si es subtítulo, con "Pgs. X-Y" si es
+    un ítem con archivo adjunto) — así cada documento muestra su rango justo
+    junto a su línea, y los ítems omitidos en DESCRIPTION (sin archivo,
+    cuando algún otro ítem de la misma categoría sí lo tiene) tampoco
+    aparecen aquí, para que las dos columnas sigan alineadas línea a línea.
+    Sin evidencia, una sola línea con el rango completo del Tab, como antes."""
     pages_value_tpl = _load("pages_value")
 
     if not evidencias:
@@ -161,8 +197,11 @@ def build_pages_cell_content(categorias: list[str], evidencias: dict | None, pag
     for cat in ordered:
         frag_names = CATEGORY_FRAGMENTS[cat]
         items_by_frag_index = {item["frag_index"]: item for item in ITEMS_POR_CATEGORIA.get(cat, [])}
+        incluidos = frag_indices_incluidos(cat, evidencias)
         paras = []
         for idx in range(len(frag_names)):
+            if idx not in incluidos:
+                continue
             item = items_by_frag_index.get(idx)
             info = evidencias.get(item["key"]) if item else None
             if info and info.get("pagina_inicio") and info.get("num_paginas"):
@@ -178,7 +217,7 @@ def build_pages_cell_content(categorias: list[str], evidencias: dict | None, pag
 
 def build_exhibit_table(tab_groups: list[dict], plural: bool = False) -> str:
     """tab_groups: [{letra, paginas, categorias: [...], pais, anio_cc,
-    anio_osac, evidencias: {item_key: {"pagina_inicio": N, "num_paginas": M}, ...}}, ...]
+    anio_osac, tipo_fee, evidencias: {item_key: {"pagina_inicio": N, "num_paginas": M}, ...}}, ...]
     `plural`: True si el caso tiene riders (más de un aplicante) — hace que
     los ítems de exhibits digan "Respondents'" en vez de "Respondent's"."""
     tbl_open = _load("tbl_open")
@@ -200,7 +239,13 @@ def build_exhibit_table(tab_groups: list[dict], plural: bool = False) -> str:
     for tg in tab_groups:
         letra_xml = _set_first_t_text(tab_value_tpl, tg["letra"])
         desc_xml = build_description_cell_content(
-            tg["categorias"], tg.get("pais"), tg.get("anio_cc"), tg.get("anio_osac"), plural
+            tg["categorias"],
+            tg.get("pais"),
+            tg.get("anio_cc"),
+            tg.get("anio_osac"),
+            plural,
+            tg.get("evidencias"),
+            tg.get("tipo_fee"),
         )
         pages_xml = build_pages_cell_content(tg["categorias"], tg.get("evidencias"), tg["paginas"])
         row = (

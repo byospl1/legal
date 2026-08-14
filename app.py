@@ -20,7 +20,14 @@ from werkzeug.utils import secure_filename
 from motor.case_store import CASE_STORE_DIR, list_cases, load_case, next_tab_letra, save_case, siguiente_pagina
 from motor.exhibit_builder import CATEGORY_ORDER, ITEMS_POR_CATEGORIA
 from motor.fill_engine import FillEngineError, generar_lote
-from motor.pdf_merge import PdfMergeError, combinar_portada_y_evidencia, contar_paginas, sugerir_anio, sugerir_pais
+from motor.pdf_merge import (
+    PdfMergeError,
+    combinar_portada_y_evidencia,
+    contar_paginas,
+    sugerir_anio,
+    sugerir_pais,
+    sugerir_tipo_fee,
+)
 from motor.validate import ValidationError
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -156,6 +163,11 @@ def api_subir_evidencia():
             # sugiere nada, no debe tumbar la subida del archivo.
             respuesta["anio_sugerido"] = None
             respuesta["pais_sugerido"] = None
+    elif tipo == "fee_receipt":
+        try:
+            respuesta["tipo_fee_sugerido"] = sugerir_tipo_fee(destino)
+        except Exception:  # noqa: BLE001
+            respuesta["tipo_fee_sugerido"] = None
 
     return jsonify(respuesta)
 

@@ -247,17 +247,28 @@ async function addTabRow() {
         <input type="text" class="tab-anio-osac" placeholder="ej. 2025">
       </div>
     </div>
+    <div class="tipo-fee-field field" style="display:none; margin-top:6px; margin-left:24px; max-width:220px;">
+      <label>Tipo de FEE (subtítulo dirá "FEE (Initial)" o "FEE (Annual)")</label>
+      <select class="tab-tipo-fee">
+        <option value="">— sin especificar —</option>
+        <option value="Initial">Initial</option>
+        <option value="Annual">Annual</option>
+      </select>
+    </div>
     <div class="documentos-tab" style="margin-top:10px;"></div>
   `;
   $("#tabsList").appendChild(div);
 
   const formOfIdentityCheck = div.querySelector('.cat-check[data-cat="form_of_identity"]');
   const countryConditionsCheck = div.querySelector('.cat-check[data-cat="country_conditions"]');
+  const feeCheck = div.querySelector('.cat-check[data-cat="fee"]');
   const paisField = div.querySelector(".pais-field");
   const anioFields = div.querySelector(".anio-fields");
+  const tipoFeeField = div.querySelector(".tipo-fee-field");
   const actualizarCampos = () => {
     paisField.style.display = formOfIdentityCheck.checked || countryConditionsCheck.checked ? "block" : "none";
     anioFields.style.display = countryConditionsCheck.checked ? "grid" : "none";
+    tipoFeeField.style.display = feeCheck.checked ? "block" : "none";
     renderDocumentUploads(div);
   };
   for (const chk of div.querySelectorAll(".cat-check")) {
@@ -342,6 +353,10 @@ async function onDocumentUpload(card, input) {
       if (data.pais_sugerido && paisInput && !paisInput.value) paisInput.value = data.pais_sugerido;
       if (data.anio_sugerido && anioInput && !anioInput.value) anioInput.value = data.anio_sugerido;
     }
+    if (itemKey === "fee_receipt") {
+      const tipoFeeInput = card.querySelector(".tab-tipo-fee");
+      if (data.tipo_fee_sugerido && tipoFeeInput && !tipoFeeInput.value) tipoFeeInput.value = data.tipo_fee_sugerido;
+    }
 
     recalcularPaginas();
   } catch (e) {
@@ -407,11 +422,12 @@ function collectExhibits() {
     const necesitaAnios = categorias.includes("country_conditions");
     const anio_cc = necesitaAnios ? card.querySelector(".tab-anio-cc").value.trim() : null;
     const anio_osac = necesitaAnios ? card.querySelector(".tab-anio-osac").value.trim() : null;
+    const tipo_fee = categorias.includes("fee") ? card.querySelector(".tab-tipo-fee").value.trim() || null : null;
     const evidencias = {};
     for (const [key, info] of Object.entries(card._evidencias || {})) {
       evidencias[key] = info.evidencia_id;
     }
-    return { letra, paginas, categorias, pais, anio_cc, anio_osac, evidencias };
+    return { letra, paginas, categorias, pais, anio_cc, anio_osac, tipo_fee, evidencias };
   });
 }
 

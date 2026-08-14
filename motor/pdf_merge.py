@@ -191,6 +191,20 @@ def sugerir_anio(pdf_path: Path) -> str | None:
     return m.group(0) if m else None
 
 
+_TIPO_FEE_RE = re.compile(r"\b(initial|annual)\b", re.IGNORECASE)
+
+
+def sugerir_tipo_fee(pdf_path: Path) -> str | None:
+    """Busca "Initial" o "Annual" en el nombre del archivo y, si no
+    aparece ahí, en el texto de la primera página del Fee Receipt — para
+    sugerir si el subtítulo debe decir "FEE (Initial)" o "FEE (Annual)"."""
+    nombre = Path(pdf_path).stem
+    m = _TIPO_FEE_RE.search(nombre)
+    if not m:
+        m = _TIPO_FEE_RE.search(_extraer_texto_primeras_paginas(pdf_path))
+    return m.group(1).capitalize() if m else None
+
+
 def _buscar_pais(texto: str | None) -> str | None:
     from motor.paises import LISTA_PAISES
 
