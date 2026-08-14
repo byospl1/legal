@@ -86,6 +86,11 @@ def index():
     return send_from_directory(BASE_DIR / "static", "index.html")
 
 
+@app.get("/como-funciona")
+def como_funciona():
+    return send_from_directory(BASE_DIR / "static", "como-funciona.html")
+
+
 @app.get("/api/init")
 def api_init():
     return jsonify(
