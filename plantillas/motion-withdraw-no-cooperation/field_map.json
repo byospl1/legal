@@ -19,7 +19,7 @@
     { "nombre": "preparador_mayus", "ids": ["910000026", "910000027"], "tipo": "texto", "opciones": [] }
   ],
   "firmas_imagen": [
-    { "nombre": "abogado", "categoria": "abogados", "ids": ["910000019", "910000020"] },
+    { "nombre": "abogado", "categoria": "abogados", "ids": ["910000029", "910000030"] },
     { "nombre": "preparador", "categoria": "preparadores", "ids": ["910000028"] }
   ],
   "campos_automaticos_no_tocar": [
