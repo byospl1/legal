@@ -38,7 +38,7 @@ CATEGORY_FRAGMENTS: dict[str, list[str]] = {
     "country_conditions": ["subtitle_country_conditions", "subitem_country_reports", "subitem_osac"],
     "form_of_identity": ["subtitle_form_of_identity", "item_passport_from"],
     "supplemental_evidence": ["subtitle_supplemental_evidence", "item_declaration"],
-    "fee": ["subtitle_fee", "item_fee_receipt", "item_fbi_fingerprint"],
+    "fee": ["item_fee_receipt", "item_fbi_fingerprint"],
 }
 
 # Textos fijos por tipo de documento de Supplemental Evidence. "News" lleva
@@ -70,8 +70,8 @@ ITEMS_POR_CATEGORIA: dict[str, list[dict]] = {
         {"key": "osac", "label": "OSAC Crime and Safety Report", "frag_index": 2},
     ],
     "fee": [
-        {"key": "fee_receipt", "label": "Fee Receipt", "frag_index": 1},
-        {"key": "fbi_fingerprint", "label": "FBI Fingerprint", "frag_index": 2},
+        {"key": "fee_receipt", "label": "Fee Receipt", "frag_index": 0},
+        {"key": "fbi_fingerprint", "label": "FBI Fingerprint", "frag_index": 1},
     ],
 }
 
@@ -255,9 +255,9 @@ def _build_category_xml(
         # "ii. OSAC Crime and Safety Reports," -> "...Reports, {AÑO}"
         parts[2] = _replace_in_first_t(parts[2], "Reports,", f"Reports, {_xml_escape(anio_osac)}")
     elif categoria == "fee" and tipo_fee:
-        # el subtítulo "FEE" no cambia; lo que cambia es el ítem del recibo:
+        # sin subtítulo "FEE" (se quitó) — lo que cambia es el ítem del recibo:
         # "Respondent's Fee Receipt..." -> "Respondent's Initial Fee Receipt..."
-        parts[1] = _replace_in_first_t(parts[1], "Fee Receipt", f"{_xml_escape(tipo_fee)} Fee Receipt")
+        parts[0] = _replace_in_first_t(parts[0], "Fee Receipt", f"{_xml_escape(tipo_fee)} Fee Receipt")
 
     incluidos = frag_indices_incluidos(categoria, evidencias)
     return "".join(p for i, p in enumerate(parts) if i in incluidos)
