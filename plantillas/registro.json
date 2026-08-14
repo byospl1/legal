@@ -6,6 +6,13 @@
       "archivo": "i589-tab-cover/00_TABS_TEAM_4.dotx",
       "field_map": "i589-tab-cover/field_map.json",
       "tiene_tabla_exhibits": true
+    },
+    {
+      "template_id": "webex-motion",
+      "nombre": "Webex — Motion for Webex Appearance",
+      "archivo": "webex-motion/MOTION_FOR_WEBEX.docx",
+      "field_map": "webex-motion/field_map.json",
+      "tiene_tabla_exhibits": false
     }
   ]
 }

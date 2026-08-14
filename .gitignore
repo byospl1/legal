@@ -9,4 +9,9 @@ output/*
 !input/.gitkeep
 !output/.gitkeep
 
+# firmas escaneadas (PNG) de abogados/preparadores: se agregan localmente
+# en cada despacho, no viajan con el código
+firmas/abogados/*.png
+firmas/preparadores/*.png
+
 .DS_Store

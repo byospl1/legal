@@ -25,10 +25,18 @@ from pathlib import Path
 
 from motor.analyze_template import Sdt, extract_top_level_sdts
 from motor.exhibit_builder import build_dividers, build_exhibit_table
-from motor.ooxml_utils import merge_runs_in_document_xml, rezip, unpack
+from motor.ooxml_utils import (
+    add_image_relationship,
+    build_inline_image_run,
+    merge_runs_in_document_xml,
+    png_dimensions,
+    rezip,
+    unpack,
+)
 from motor.validate import validate_docx
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+FIRMAS_DIR = BASE_DIR / "firmas"
 
 
 class FillEngineError(Exception):
@@ -171,6 +179,79 @@ def _apply_field_values(document_xml: str, field_map: dict, values: dict[str, st
     return "".join(out)
 
 
+def _firma_lookup_nombre(categoria: str, case: dict) -> str | None:
+    """Nombre de archivo (sin extensión) bajo el que debe estar guardada la
+    firma de esta persona en firmas/{categoria}/ — ver _apply_firmas_imagen."""
+    if categoria == "abogados":
+        abogado = case.get("abogado")
+        return abogado.split(",")[0].strip() if abogado else None
+    if categoria == "preparadores":
+        return case.get("preparador") or None
+    return None
+
+
+def _apply_firmas_imagen(document_xml: str, tmp_path: Path, field_map: dict, case: dict) -> str:
+    """Para cada entrada de field_map["firmas_imagen"], si existe un PNG en
+    firmas/{categoria}/{nombre}.png para la persona resuelta, sustituye la
+    línea de firma (subrayado en blanco) por la imagen escaneada. Si no hay
+    PNG para esa persona, deja la línea tal cual — nunca bloquea la
+    generación por una firma faltante."""
+    entries = field_map.get("firmas_imagen") or []
+    if not entries:
+        return document_xml
+
+    top_level = extract_top_level_sdts(document_xml)
+    by_id = {s.id: s for s in top_level}
+
+    replacements: list[tuple[int, int, str]] = []
+    doc_pr_id = 900100000
+
+    for entry in entries:
+        nombre = _firma_lookup_nombre(entry["categoria"], case)
+        if not nombre:
+            continue
+        image_path = FIRMAS_DIR / entry["categoria"] / f"{_sanitize_filename_part(nombre)}.png"
+        if not image_path.exists():
+            continue
+        width_px, height_px = png_dimensions(image_path)
+        media_name = f"firma_{entry['categoria']}_{'_'.join(entry['ids'])}.png"
+        rel_id = add_image_relationship(tmp_path, image_path, media_name)
+
+        for sid in entry["ids"]:
+            sdt = by_id.get(sid)
+            if sdt is None:
+                continue
+            doc_pr_id += 1
+            image_run = build_inline_image_run(rel_id, width_px, height_px, doc_pr_id)
+
+            content = sdt.content_xml
+            ppr_end = content.find("</w:pPr>")
+            if ppr_end != -1:
+                ppr_end += len("</w:pPr>")
+                new_content = content[:ppr_end] + image_run + "</w:p>"
+            else:
+                popen_end = content.find(">") + 1
+                new_content = content[:popen_end] + image_run + "</w:p>"
+
+            prefix = sdt.xml[: sdt.content_start_offset]
+            content_close_idx = sdt.content_start_offset + len(sdt.content_xml)
+            remainder = sdt.xml[content_close_idx:]
+            replacements.append((sdt.start, sdt.end, prefix + new_content + remainder))
+
+    if not replacements:
+        return document_xml
+
+    replacements.sort(key=lambda r: r[0])
+    out = []
+    cursor = 0
+    for start, end, new_xml in replacements:
+        out.append(document_xml[cursor:start])
+        out.append(new_xml)
+        cursor = end
+    out.append(document_xml[cursor:])
+    return "".join(out)
+
+
 def _locate_tbl_by_markers(document_xml: str, markers: list[str]) -> tuple[int, int]:
     for m in re.finditer(r"<w:tbl>", document_xml):
         start = m.start()
@@ -243,6 +324,16 @@ def _apply_plural_respondents(document_xml: str) -> str:
     return document_xml
 
 
+def _abogado_firma(abogado: str | None) -> str | None:
+    """Forma corta del abogado para bloques de firma (ej. "John Negron,
+    Esq. (SBN 21806)" -> "John Negron Esq.") — se usa en plantillas como
+    Motion for Webex, donde la firma no lleva ni la coma ni el SBN."""
+    if not abogado:
+        return None
+    nombre = abogado.split(",")[0].strip()
+    return f"{nombre} Esq."
+
+
 def _resolve_values(case: dict, document_instance: dict) -> dict[str, str]:
     from motor.case_store import a_number_para_documento, nombre_para_documento
 
@@ -253,6 +344,7 @@ def _resolve_values(case: dict, document_instance: dict) -> dict[str, str]:
         "juez": case["juez"],
         "proxima_audiencia": case["proxima_audiencia"],
         "abogado": case["abogado"],
+        "abogado_firma": _abogado_firma(case["abogado"]),
         "preparador": case["preparador"],
         "titulo": document_instance["titulo"],
     }
@@ -294,6 +386,8 @@ def generar_documento(
 
         if field_map.get("tiene_tabla_exhibits") and document_instance.get("exhibits"):
             document_xml = _apply_exhibits(document_xml, document_instance["exhibits"], plural=tiene_riders)
+
+        document_xml = _apply_firmas_imagen(document_xml, tmp_path, field_map, case)
 
         if tiene_riders:
             document_xml = _apply_plural_respondents(document_xml)

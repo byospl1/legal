@@ -1,0 +1,84 @@
+{
+  "template_id": "webex-motion",
+  "archivo": "MOTION_FOR_WEBEX.docx",
+  "campos_simples": [],
+  "campos_anidados": [],
+  "grupos_bookmark": [],
+  "grupos_sync_manual": [
+    {
+      "nombre": "abogado",
+      "ids": ["900000001", "900000010"],
+      "tipo": "texto",
+      "opciones": []
+    },
+    {
+      "nombre": "abogado_firma",
+      "ids": ["900000016"],
+      "tipo": "texto",
+      "opciones": []
+    },
+    {
+      "nombre": "cliente_nombre",
+      "ids": ["900000002", "900000006", "900000011", "900000012", "900000015", "900000017", "900000018", "900000021"],
+      "tipo": "texto",
+      "opciones": []
+    },
+    {
+      "nombre": "a_number",
+      "ids": ["900000007", "900000013", "900000019", "900000022"],
+      "tipo": "texto",
+      "opciones": []
+    },
+    {
+      "nombre": "corte_sede",
+      "ids": ["900000003", "900000004", "900000005"],
+      "tipo": "texto",
+      "opciones": []
+    },
+    {
+      "nombre": "juez",
+      "ids": ["900000008", "900000014", "900000020"],
+      "tipo": "texto",
+      "opciones": []
+    },
+    {
+      "nombre": "preparador",
+      "ids": ["900000023", "900000024"],
+      "tipo": "texto",
+      "opciones": []
+    },
+    {
+      "nombre": "proxima_audiencia",
+      "ids": ["900000009"],
+      "tipo": "texto",
+      "opciones": []
+    }
+  ],
+  "firmas_imagen": [
+    {
+      "nombre": "abogado",
+      "categoria": "abogados",
+      "ids": ["900000025"]
+    },
+    {
+      "nombre": "preparador",
+      "categoria": "preparadores",
+      "ids": ["900000026"]
+    }
+  ],
+  "campos_automaticos_no_tocar": [
+    {
+      "tipo": "DATE",
+      "descripcion": "Campo de Word autoactualizable (DATE \\@ \"MMMM d, yyyy\"), firma del cuerpo de la moción — no tocar"
+    },
+    {
+      "tipo": "DATE",
+      "descripcion": "Campo de Word autoactualizable (DATE \\@ \"MMMM d, yyyy\"), Certificate of Service — no tocar"
+    },
+    {
+      "tipo": "DATE",
+      "descripcion": "Campo de Word autoactualizable (DATE \\@ \"M/d/yyyy\"), Certificate of Service — no tocar"
+    }
+  ],
+  "tiene_tabla_exhibits": false
+}

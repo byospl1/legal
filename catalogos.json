@@ -5,7 +5,8 @@
     "VAN NUYS, CA",
     "WEST LOS ANGELES, CA",
     "LOS ANGELES",
-    "SAN DIEGO, CA"
+    "SAN DIEGO, CA",
+    "NEW YORK, NY"
   ],
   "juez": [
     "Siebert, Andrea.",
@@ -19,7 +20,8 @@
     "Virchis, Bridget",
     "Flagg, Darin",
     "Anderson, Amelia ",
-    "Pepi, Lindsey "
+    "Pepi, Lindsey ",
+    "Wright, Virna A."
   ],
   "abogado": [
     "Carlos Caraballo, Esq. (SBN 21605)",
@@ -38,6 +40,9 @@
       "INDEX OF SUPPORTING DOCUMENTATION FOR RESPONDENTS’ APPLICATION FOR ASYLUM, WITHHOLDING OF REMOVAL, AND RELIEF UNDER CAT (I-589).",
       "FEE RECEIPT (FORM I-589)",
       "RESPONDENT’S AMENDED APPLICATION FOR ASYLUM, WITHHOLDING OF REMOVAL AND RELIEF UNDER CAT (I-589)."
+    ],
+    "webex-motion": [
+      "MOTION FOR WEBEX APPEARANCE"
     ]
   },
   "exhibit_categorias": {

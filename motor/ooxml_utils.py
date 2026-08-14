@@ -9,6 +9,7 @@ requirements.txt.
 from __future__ import annotations
 
 import os
+import re
 import stat
 import tempfile
 import time
@@ -265,3 +266,99 @@ def merge_runs_in_document_xml(document_xml_path: Path) -> int:
         merge_count += _merge_runs_in(container, run_names)
     document_xml_path.write_bytes(dom.toxml(encoding="UTF-8"))
     return merge_count
+
+
+# ---------------------------------------------------------------------------
+# Inserción de imágenes (ej. firmas escaneadas): registra la imagen como
+# relationship del paquete .docx desempaquetado y arma el <w:drawing> inline
+# que va dentro de un <w:r> para mostrarla.
+# ---------------------------------------------------------------------------
+
+EMU_PER_PX = 9525  # a 96 DPI, 1 pulgada = 914400 EMU = 96 px
+
+
+def png_dimensions(path: Path) -> tuple[int, int]:
+    """Ancho/alto en píxeles leyendo el chunk IHDR — evita depender de
+    Pillow solo para esto (mismo criterio "vendorizado" que el resto del
+    módulo). Firma el formato: 8 bytes de cabecera PNG + IHDR con width/height
+    como big-endian uint32 en los bytes [16:24)."""
+    data = Path(path).read_bytes()[:26]
+    if data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        raise ValueError(f"'{Path(path).name}' no es un PNG válido (falta la cabecera IHDR)")
+    width = int.from_bytes(data[16:20], "big")
+    height = int.from_bytes(data[20:24], "big")
+    return width, height
+
+
+def _next_relationship_id(rels_xml: str) -> str:
+    ids = [int(m) for m in re.findall(r'Id="rId(\d+)"', rels_xml)]
+    return f"rId{max(ids) + 1 if ids else 1}"
+
+
+def add_image_relationship(tmp_path: Path, image_path: Path, media_name: str) -> str:
+    """Copia `image_path` a word/media/{media_name} dentro del .docx
+    desempaquetado en `tmp_path` y agrega su relationship a
+    word/_rels/document.xml.rels. Devuelve el rId asignado."""
+    media_dir = tmp_path / "word" / "media"
+    media_dir.mkdir(parents=True, exist_ok=True)
+    dest = media_dir / media_name
+    dest.write_bytes(Path(image_path).read_bytes())
+
+    rels_path = tmp_path / "word" / "_rels" / "document.xml.rels"
+    rels_xml = rels_path.read_text(encoding="utf-8")
+    rel_id = _next_relationship_id(rels_xml)
+    new_rel = (
+        f'<Relationship Id="{rel_id}" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
+        f'Target="media/{media_name}"/>'
+    )
+    rels_xml = rels_xml.replace("</Relationships>", new_rel + "</Relationships>")
+    rels_path.write_text(rels_xml, encoding="utf-8")
+    return rel_id
+
+
+def build_inline_image_run(
+    rel_id: str,
+    width_px: int,
+    height_px: int,
+    doc_pr_id: int,
+    max_width_px: int = 190,
+    max_height_px: int = 60,
+    name: str = "Firma",
+) -> str:
+    """XML de un <w:r> con un <w:drawing> inline mostrando la imagen ya
+    registrada bajo `rel_id`, escalada (conservando proporción) para que
+    quepa dentro de max_width_px x max_height_px."""
+    scale = min(max_width_px / width_px, max_height_px / height_px, 1.0)
+    cx = round(width_px * scale * EMU_PER_PX)
+    cy = round(height_px * scale * EMU_PER_PX)
+    return (
+        "<w:r><w:drawing>"
+        f'<wp:inline distT="0" distB="0" distL="0" distR="0">'
+        f'<wp:extent cx="{cx}" cy="{cy}"/>'
+        '<wp:effectExtent l="0" t="0" r="0" b="0"/>'
+        f'<wp:docPr id="{doc_pr_id}" name="{name}"/>'
+        "<wp:cNvGraphicFramePr>"
+        '<a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/>'
+        "</wp:cNvGraphicFramePr>"
+        '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+        '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+        '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+        "<pic:nvPicPr>"
+        f'<pic:cNvPr id="{doc_pr_id}" name="{name}"/>'
+        "<pic:cNvPicPr/>"
+        "</pic:nvPicPr>"
+        "<pic:blipFill>"
+        f'<a:blip r:embed="{rel_id}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>'
+        "<a:stretch><a:fillRect/></a:stretch>"
+        "</pic:blipFill>"
+        "<pic:spPr>"
+        f'<a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>'
+        "</pic:spPr>"
+        "</pic:pic>"
+        "</a:graphicData>"
+        "</a:graphic>"
+        "</wp:inline>"
+        "</w:drawing></w:r>"
+    )
