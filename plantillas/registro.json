@@ -89,6 +89,20 @@
               "placeholder": "ej. March 03, 2026"
             }
           ]
+        },
+        {
+          "template_id": "motion-withdraw-location-known",
+          "nombre": "Only Location Known (BORRADOR — revisar con abogado antes de usar)",
+          "archivo": "motion-withdraw-location-known/MOTION_TO_WITHDRAW_LOCATION_KNOWN.docx",
+          "field_map": "motion-withdraw-location-known/field_map.json",
+          "tiene_tabla_exhibits": false,
+          "campos_extra": [
+            {
+              "nombre": "direccion_conocida",
+              "etiqueta": "Única dirección conocida del cliente (sin teléfono ni otro contacto)",
+              "placeholder": "ej. 7112 Seville Ave, Huntington Park, CA 90255"
+            }
+          ]
         }
       ]
     }

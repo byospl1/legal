@@ -1,6 +1,6 @@
 {
-  "template_id": "motion-withdraw-no-cooperation",
-  "archivo": "MOTION_TO_WITHDRAW_NO_COOPERATION.docx",
+  "template_id": "motion-withdraw-location-known",
+  "archivo": "MOTION_TO_WITHDRAW_LOCATION_KNOWN.docx",
   "campos_simples": [],
   "campos_anidados": [],
   "grupos_bookmark": [],
@@ -15,7 +15,6 @@
     { "nombre": "abogado_nombre_mayus", "ids": ["910000021"], "tipo": "texto", "opciones": [] },
     { "nombre": "abogado_nombre", "ids": ["910000022", "910000023"], "tipo": "texto", "opciones": [] },
     { "nombre": "direccion_conocida", "ids": ["910000024"], "tipo": "texto", "opciones": [] },
-    { "nombre": "telefono_conocido", "ids": ["910000025"], "tipo": "texto", "opciones": [] },
     { "nombre": "preparador_mayus", "ids": ["910000026", "910000027"], "tipo": "texto", "opciones": [] }
   ],
   "firmas_imagen": [
@@ -29,7 +28,7 @@
   ],
   "tiene_tabla_exhibits": false,
   "evidencia_exhibits": [
-    { "letra": "B", "descripcion": "Proof of no contact / cartas de no contacto", "anchor_texto": "“EXHIBIT B”" },
+    { "letra": "B", "descripcion": "Comprobante de envío (USPS Certified Mail) a la dirección conocida del cliente", "anchor_texto": "“EXHIBIT B”" },
     { "letra": "C", "descripcion": "Disengagement Letter", "anchor_texto": "“EXHIBIT C”" },
     { "letra": "D", "descripcion": "Pro bono List", "anchor_texto": "“EXHIBIT D”" }
   ],
@@ -38,7 +37,7 @@
     {
       "letra": "B", "removible": true, "conector_run_separado": true, "conector_prefijo": "",
       "marcador_solo_texto": "(Exhibit B)", "termina_oracion": false,
-      "contenido_texto": " Proof of no contact with formal no contact letters ",
+      "contenido_texto": " Proof of mailing to Respondent’s known address ",
       "marcador_texto": "(Exhibit B)"
     },
     {

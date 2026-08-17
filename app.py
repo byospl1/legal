@@ -498,7 +498,8 @@ def api_generar():
                 pagina_inicial_exhibits = 1
             try:
                 _out, _ultima, no_encontradas = combinar_portada_y_evidencia_exhibits(
-                    result.pdf_path, exhibits_evidencia_rutas, pagina_inicial_exhibits, result.pdf_path
+                    result.pdf_path, exhibits_evidencia_rutas, pagina_inicial_exhibits, result.pdf_path,
+                    numerar=False,
                 )
                 entry["evidencia_fusionada"] = True
                 if no_encontradas:

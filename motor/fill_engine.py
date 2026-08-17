@@ -288,6 +288,234 @@ def _locate_divider_block(document_xml: str) -> tuple[int, int]:
     return pagebreak_start, title_end
 
 
+def _find_enclosing_run(document_xml: str, text_pos: int) -> tuple[int, int]:
+    """Rango [inicio, fin) del <w:r>...</w:r> que contiene la posición
+    `text_pos` (que debe caer dentro de su <w:t>) — mismo criterio usado por
+    _apply_firmas_imagen para ubicar el run de una imagen de firma."""
+    r_start = document_xml.rfind("<w:r>", 0, text_pos)
+    r_start_alt = document_xml.rfind("<w:r ", 0, text_pos)
+    r_start = max(r_start, r_start_alt)
+    r_end = document_xml.find("</w:r>", text_pos) + len("</w:r>")
+    return r_start, r_end
+
+
+def _find_preceding_run(document_xml: str, pos: int) -> tuple[int, int]:
+    """Rango [inicio, fin) del <w:r>...</w:r> inmediatamente ANTERIOR a la
+    posición `pos` (que debe ser el inicio de otro <w:r>) — se usa para el
+    run del conector cuando está separado del run de contenido, ver
+    _apply_notice_exhibits."""
+    prev_end = document_xml.rfind("</w:r>", 0, pos) + len("</w:r>")
+    prev_start = document_xml.rfind("<w:r>", 0, prev_end)
+    prev_start_alt = document_xml.rfind("<w:r ", 0, prev_end)
+    prev_start = max(prev_start, prev_start_alt)
+    return prev_start, prev_end
+
+
+def _locate_exhibit_divider_page(document_xml: str, anchor_texto: str) -> tuple[int, int]:
+    """Rango [inicio, fin) de la página divisoria "EXHIBIT {letra}" completa
+    de un Motion to Withdraw (plantillas con `evidencia_exhibits`, sin tabla
+    de exhibits dinámica): desde el párrafo <w:pageBreakBefore/> que empieza
+    esa página hasta (sin incluirlo) el siguiente <w:pageBreakBefore/> del
+    documento — sea el de la letra siguiente o el de otra sección. Cada
+    página de estas es autocontenida (trae su propio salto de página al
+    inicio), así que quitarla completa no afecta el salto de página de lo
+    que viene después. Ver CLAUDE.md — regla decidida explícitamente por el
+    usuario: un Exhibit sin evidencia adjunta no debe dejar una página
+    divisoria huérfana en el documento final."""
+    marker_idx = document_xml.find(f">{anchor_texto}<")
+    if marker_idx == -1:
+        raise FillEngineError(f"No se encontró la página divisoria {anchor_texto!r} en la plantilla")
+    heading_start = document_xml.rfind("<w:p ", 0, marker_idx)
+    heading_end = document_xml.find("</w:p>", marker_idx) + len("</w:p>")
+    if heading_start == -1:
+        raise FillEngineError(f"Estructura inesperada alrededor de la divisoria {anchor_texto!r}")
+
+    pos = heading_start
+    block_start = None
+    for _ in range(100):
+        prev_start = document_xml.rfind("<w:p ", 0, pos)
+        if prev_start == -1:
+            break
+        prev_end = document_xml.find("</w:p>", prev_start) + len("</w:p>")
+        if "<w:pageBreakBefore/>" in document_xml[prev_start:prev_end]:
+            block_start = prev_start
+            break
+        pos = prev_start
+    if block_start is None:
+        raise FillEngineError(f"No se encontró el salto de página que empieza la divisoria {anchor_texto!r}")
+
+    pos = heading_end
+    block_end = len(document_xml)
+    for _ in range(100):
+        next_start = document_xml.find("<w:p ", pos)
+        if next_start == -1:
+            break
+        next_end = document_xml.find("</w:p>", next_start) + len("</w:p>")
+        if "<w:pageBreakBefore/>" in document_xml[next_start:next_end]:
+            block_end = next_start
+            break
+        pos = next_end
+
+    return block_start, block_end
+
+
+def _apply_missing_exhibit_dividers(document_xml: str, field_map: dict, letras_con_evidencia: set[str]) -> str:
+    """Para plantillas con `evidencia_exhibits` (Motion to Withdraw): si un
+    Exhibit de la lista NO tiene evidencia adjunta en esta corrida, se
+    elimina POR COMPLETO su página divisoria "EXHIBIT {letra}" — decisión
+    explícita del usuario (2026-08-17), ver CLAUDE.md. Complementa a
+    _apply_notice_exhibits, que recorta la mención de ese Exhibit en el
+    párrafo NOTICE del cuerpo de la moción."""
+    entries = field_map.get("evidencia_exhibits") or []
+    if not entries:
+        return document_xml
+
+    replacements: list[tuple[int, int]] = []
+    for entry in entries:
+        if entry["letra"] in letras_con_evidencia:
+            continue
+        replacements.append(_locate_exhibit_divider_page(document_xml, entry["anchor_texto"]))
+
+    if not replacements:
+        return document_xml
+
+    replacements.sort()
+    out = []
+    cursor = 0
+    for start, end in replacements:
+        out.append(document_xml[cursor:start])
+        cursor = end
+    out.append(document_xml[cursor:])
+    return "".join(out)
+
+
+def _apply_notice_exhibits(document_xml: str, field_map: dict, letras_con_evidencia: set[str]) -> str:
+    """Recorta, en el párrafo NOTICE del cuerpo de la moción, la mención de
+    cada Exhibit que se eliminó por falta de evidencia (ver
+    _apply_missing_exhibit_dividers) — decisión explícita del usuario
+    (2026-08-17): no basta con quitar la página divisoria, el NOTICE cita
+    cada Exhibit por nombre en una sola oración y no debe seguir mencionando
+    uno que ya no está adjunto.
+
+    Cada entrada de field_map["notice_exhibits"] describe, EN EL ORDEN en
+    que aparece en la oración, un ítem de esa lista:
+    - "letra": la letra del Exhibit.
+    - "removible": si es False, es un ítem fijo (ej. la Declaración propia
+      del abogado) que nunca se quita ni se busca — solo cuenta para el
+      orden. Debe traer "marcador_texto" para poder avanzar el cursor de
+      búsqueda y, si hace falta, servir de destino del punto final.
+    - "contenido_texto": texto literal (estable, no depende del caso) que
+      ubica el run de "conector + contenido" de este ítem.
+    - "marcador_texto": texto literal "(Exhibit X)" (o variante) que cierra
+      el ítem; si vive en el MISMO run que "contenido_texto" se puede omitir.
+    - "conector_run_separado": True si el conector (ej. una "," suelta) es
+      su PROPIO run separado, inmediatamente antes del run de contenido
+      (patrón de motion-withdraw-no-cooperation) en vez de venir pegado
+      como prefijo de "contenido_texto" (patrón de motion-withdraw-cancelation).
+    - "conector_prefijo": el prefijo literal (ej. ", " o ", and ") que hay
+      que quitarle a "contenido_texto" si este ítem termina siendo el
+      PRIMER sobreviviente de la lista (nunca lleva conector propio el
+      primer ítem de una lista).
+    - "marcador_solo_texto": texto exacto del marcador, usado solo para la
+      corrección de punto final de abajo.
+    - "termina_oracion": True si el texto de este ítem (removible) es el que
+      trae el punto final de la oración completa (ej. "(Exhibit D)." en
+      motion-withdraw-no-cooperation) — si se elimina, hay que ponerle punto
+      al ítem que quede último.
+
+    Esta función corre ANTES de merge_runs_in_document_xml (ver
+    generar_documento) porque depende de que ciertos runs sigan separados
+    tal como los trae la plantilla — fusionarlos antes le rompería los
+    puntos de corte."""
+    items = field_map.get("notice_exhibits") or []
+    if not items:
+        return document_xml
+
+    if not any(it.get("removible") and it["letra"] not in letras_con_evidencia for it in items):
+        return document_xml
+
+    cursor = 0
+    replacements: list[tuple[int, int, str]] = []
+    primer_sobreviviente = None
+    primer_span = None
+    ultimo_sobreviviente = None
+    ultimo_marker_text_end = None
+    algun_terminal_eliminado = False
+
+    for it in items:
+        letra = it["letra"]
+        removible = bool(it.get("removible"))
+        span_start = span_end = None
+
+        if removible:
+            content_pos = document_xml.find(it["contenido_texto"], cursor)
+            if content_pos == -1:
+                raise FillEngineError(f"No se encontró el texto del Exhibit {letra} en el párrafo NOTICE")
+            span_start, span_end = _find_enclosing_run(document_xml, content_pos)
+            if it.get("conector_run_separado"):
+                span_start, _ = _find_preceding_run(document_xml, span_start)
+            marcador_texto = it.get("marcador_texto")
+            if marcador_texto:
+                marker_pos = document_xml.find(marcador_texto, span_end)
+                if marker_pos == -1:
+                    raise FillEngineError(f"No se encontró el marcador del Exhibit {letra} en el párrafo NOTICE")
+                _, span_end = _find_enclosing_run(document_xml, marker_pos)
+            cursor = span_end
+        else:
+            marcador_texto = it.get("marcador_texto")
+            if marcador_texto:
+                marker_pos = document_xml.find(marcador_texto, cursor)
+                if marker_pos != -1:
+                    _, cursor = _find_enclosing_run(document_xml, marker_pos)
+
+        sobrevive = (not removible) or (letra in letras_con_evidencia)
+        if sobrevive:
+            if primer_sobreviviente is None:
+                primer_sobreviviente = it
+                primer_span = (span_start, content_pos) if removible else None
+            ultimo_sobreviviente = it
+            marker_run_end = span_end if removible else cursor
+            # el punto final debe quedar DENTRO del <w:t> del marcador (justo
+            # antes de su </w:t>), no después de </w:r> — insertarlo ahí
+            # queda como texto suelto entre elementos y Word lo ignora.
+            ultimo_marker_text_end = document_xml.rfind("</w:t>", 0, marker_run_end)
+        else:
+            replacements.append((span_start, span_end, ""))
+            if it.get("termina_oracion"):
+                algun_terminal_eliminado = True
+
+    if primer_sobreviviente is not None and primer_sobreviviente.get("removible"):
+        prefijo = primer_sobreviviente.get("conector_prefijo") or ""
+        if prefijo:
+            span_start, content_pos = primer_span
+            if document_xml[content_pos:content_pos + len(prefijo)] == prefijo:
+                replacements.append((content_pos, content_pos + len(prefijo), ""))
+        elif primer_sobreviviente.get("conector_run_separado"):
+            # el conector es un run aparte: ya quedó incluido en span_start
+            # más arriba solo cuando el ítem SE ELIMINA; si sobrevive pero
+            # queda primero, hay que quitar ESE run separado ahora.
+            content_pos = primer_span[1]
+            run_start, _ = _find_enclosing_run(document_xml, content_pos)
+            conector_start, conector_end = _find_preceding_run(document_xml, run_start)
+            replacements.append((conector_start, conector_end, ""))
+
+    if algun_terminal_eliminado and ultimo_sobreviviente is not None and ultimo_marker_text_end is not None:
+        marcador = ultimo_sobreviviente.get("marcador_solo_texto") or ultimo_sobreviviente.get("marcador_texto")
+        ya_termina = bool(marcador) and marcador.rstrip().endswith(".")
+        if marcador and not ya_termina:
+            replacements.append((ultimo_marker_text_end, ultimo_marker_text_end, "."))
+
+    replacements.sort(key=lambda r: (r[0], r[1]))
+    out = []
+    cur = 0
+    for start, end, new_text in replacements:
+        out.append(document_xml[cur:start])
+        out.append(new_text)
+        cur = max(cur, end)
+    out.append(document_xml[cur:])
+    return "".join(out)
+
+
 def _apply_exhibits(document_xml: str, tab_groups: list[dict], plural: bool = False) -> str:
     tbl_start, tbl_end = _locate_tbl_by_markers(document_xml, ["TAB", "DESCRIPTION", "PAGES"])
     new_table = build_exhibit_table(tab_groups, plural=plural)
@@ -413,6 +641,24 @@ def generar_documento(
         tmp_path = Path(tmp)
         unpack(dotx_path, tmp_path)
         doc_path = tmp_path / "word" / "document.xml"
+
+        if field_map.get("evidencia_exhibits"):
+            # letras con evidencia adjunta en ESTA corrida (viene del mismo
+            # dict que arma el merge de PDF a nivel de app.py, ver
+            # exhibits_evidencia/motor.pdf_merge.combinar_portada_y_evidencia_exhibits)
+            # — un Exhibit sin evidencia aquí pierde su página divisoria y su
+            # mención en el NOTICE, ver _apply_missing_exhibit_dividers y
+            # _apply_notice_exhibits. Corre ANTES de merge_runs_in_document_xml
+            # a propósito: depende de que ciertos runs de la plantilla sigan
+            # separados tal como los trae, fusionarlos antes rompería los
+            # puntos de corte.
+            exhibits_evidencia = document_instance.get("exhibits_evidencia") or {}
+            letras_con_evidencia = {letra for letra, ids in exhibits_evidencia.items() if ids}
+            pre_xml = doc_path.read_text(encoding="utf-8")
+            pre_xml = _apply_missing_exhibit_dividers(pre_xml, field_map, letras_con_evidencia)
+            pre_xml = _apply_notice_exhibits(pre_xml, field_map, letras_con_evidencia)
+            doc_path.write_text(pre_xml, encoding="utf-8")
+
         merge_runs_in_document_xml(doc_path)
 
         tiene_riders = bool(case.get("riders"))

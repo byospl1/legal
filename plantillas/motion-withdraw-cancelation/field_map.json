@@ -31,5 +31,22 @@
     { "letra": "A", "descripcion": "Cancelation Request (inglés y español)", "anchor_texto": "“EXHIBIT A”" },
     { "letra": "B", "descripcion": "Disengagement Letter (inglés y español)", "anchor_texto": "“EXHIBIT B”" },
     { "letra": "C", "descripcion": "Hearing Notice de la próxima Individual Hearing", "anchor_texto": "“EXHIBIT C”" }
+  ],
+  "notice_exhibits": [
+    {
+      "letra": "A", "removible": true, "conector_prefijo": "", "marcador_solo_texto": "(Exhibit A)", "termina_oracion": false,
+      "contenido_texto": "Cancelation Request which was sent by the Respondent’s previous address in ",
+      "marcador_texto": " (Both in English and Spanish) (Exhibit A)"
+    },
+    {
+      "letra": "B", "removible": true, "conector_prefijo": ", ", "marcador_solo_texto": "as Exhibit B)", "termina_oracion": false,
+      "contenido_texto": ", Disengagement Letter (sent both Spanish and English versions to the Respondents current address located in ",
+      "marcador_texto": " as Exhibit B)"
+    },
+    {
+      "letra": "C", "removible": true, "conector_prefijo": ", and ", "marcador_solo_texto": "(Exhibit C)", "termina_oracion": false,
+      "contenido_texto": ", and the Hearing Notice for the next Individual Hearing sent to Respondents (Exhibit C)",
+      "marcador_texto": null
+    }
   ]
 }

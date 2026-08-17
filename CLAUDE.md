@@ -9,7 +9,8 @@ reglas que ya están decididas, y evita repetir errores ya corregidos.
 
 ## Plantillas registradas (`plantillas/registro.json`)
 
-Fuente de verdad de qué plantillas existen. Hoy son 5:
+Fuente de verdad de qué plantillas existen. Hoy son 6 (3 de ellas variantes
+del grupo `motion-withdraw`):
 
 | template_id | tipo | tiene_tabla_exhibits |
 |---|---|---|
@@ -18,11 +19,31 @@ Fuente de verdad de qué plantillas existen. Hoy son 5:
 | `eoir-33-change-address` | PDF form fijo (AcroForm) | no |
 | `motion-withdraw-no-cooperation` | MOTION (variante de `motion-withdraw`) | no |
 | `motion-withdraw-cancelation` | MOTION (variante de `motion-withdraw`) | no |
+| `motion-withdraw-location-known` | MOTION (variante de `motion-withdraw`) — **BORRADOR**, ver abajo | no |
 
 Para agregar una plantilla nueva, seguir el procedimiento del `README.md`
 ("Agregar una plantilla `.dotx` nueva"): `analyze_template.py` → revisar
 `field_map.json` a mano → si tiene tabla de exhibits, fragments +
 `exhibit_builder.py` → registrar en `registro.json`.
+
+### `motion-withdraw-location-known` — plantilla BORRADOR, pendiente de revisión del abogado
+
+Creada 2026-08-17 a pedido explícito del usuario, para el escenario en que
+**solo se conoce la dirección del cliente** (a diferencia de
+`motion-withdraw-no-cooperation`, que también pide un teléfono conocido). El
+texto narrativo del NOTICE (el párrafo que reemplaza "We are completely
+unaware of the whereabouts..." + el párrafo del teléfono) **lo redactó
+Claude como borrador**, no es texto validado por un abogado del despacho —
+el propio usuario pidió explícitamente "redacta tú un borrador... con la
+advertencia de que es un borrador mío, no texto validado por un abogado".
+Antes de usarla en un caso real, un abogado debe revisar/aprobar la
+redacción exacta. El `nombre` en `registro.json` incluye "(BORRADOR —
+revisar con abogado antes de usar)" a propósito — no quitar esa advertencia
+del selector sin que el despacho confirme que ya revisó el texto.
+Estructuralmente es un clon de `motion-withdraw-no-cooperation` (mismo
+patrón de Exhibits A/B/C/D, mismo mecanismo de firmas/campos), solo cambia
+el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
+`telefono_conocido` (aquí no aplica, solo hay dirección).
 
 ## Regla de numeración de páginas (decidida explícitamente por el despacho)
 
@@ -41,9 +62,18 @@ Para agregar una plantilla nueva, seguir el procedimiento del `README.md`
   `_pagina_numero_overlay(width, height, numero)` (reportlab,
   `drawRightString`, Times-Roman 11, `margen_derecho=40`,
   `margen_inferior=28`), usada por `combinar_portada_y_evidencia()` (un solo
-  punto de inserción, antes de "PROOF OF SERVICE") y
-  `combinar_portada_y_evidencia_exhibits()` (un punto de inserción por letra
-  de Exhibit, para los Tabs de I-589).
+  punto de inserción, antes de "PROOF OF SERVICE" — usada por los Tabs de
+  I-589 y `webex-motion`) y `combinar_portada_y_evidencia_exhibits()` (un
+  punto de inserción por letra de Exhibit con nombre — usada por las
+  variantes de `motion-withdraw`).
+- **Excepción explícita (2026-08-17): Motion to Withdraw NO numera sus
+  páginas de evidencia**, a diferencia de la regla general de arriba —
+  decisión del usuario. `combinar_portada_y_evidencia_exhibits()` recibe un
+  parámetro `numerar: bool = True`; `app.py` lo llama con `numerar=False`
+  para el flujo de `exhibits_evidencia` (el único que usa esta función hoy,
+  que es exclusivo de las 3 variantes de `motion-withdraw`). El default
+  sigue en `True` por si otra plantilla futura reutiliza este mismo
+  mecanismo de "exhibits con nombre" y sí quiere numeración.
 - **Bug ya corregido**: PDFs de evidencia escaneados a veces traen `/Rotate`
   ≠ 0 (la página se ve derecha porque el visor la rota al mostrarla, pero
   sus coordenadas de contenido siguen siendo las de antes de rotar). Sin
@@ -54,6 +84,64 @@ Para agregar una plantilla nueva, seguir el procedimiento del `README.md`
   toca `pdf_merge.py`, mantener esa llamada — es la razón por la que el
   número siempre cae en la esquina visual correcta sin importar cómo venga
   guardado el PDF de origen.
+
+## Motion to Withdraw: un Exhibit sin evidencia se elimina del documento (decidido explícitamente)
+
+- **Regla del usuario (2026-08-17)**: si en una corrida de `motion-withdraw-*`
+  solo se sube evidencia para algunos de los Exhibits declarados (ej. solo
+  Exhibit A de A/B/C), los Exhibits SIN evidencia se eliminan por completo
+  del documento generado — ni página divisoria huérfana, ni mención en el
+  párrafo NOTICE. No es opcional/configurable desde la UI, es el
+  comportamiento por defecto de `motor/fill_engine.generar_documento` para
+  cualquier plantilla con `field_map["evidencia_exhibits"]`.
+- Dos piezas, ambas en `motor/fill_engine.py`, ambas corren **antes** de
+  `merge_runs_in_document_xml` (¡importante! ver más abajo por qué):
+  - `_apply_missing_exhibit_dividers`: quita la página divisoria completa
+    "EXHIBIT {letra}" (vía `_locate_exhibit_divider_page`, que ubica el
+    párrafo `<w:pageBreakBefore/>` que la empieza y corta hasta el
+    siguiente `<w:pageBreakBefore/>` del documento — cada página de estas
+    es autocontenida, así que esto nunca rompe el salto de página de lo que
+    viene después).
+  - `_apply_notice_exhibits`: recorta la mención de ese Exhibit en el
+    párrafo NOTICE del cuerpo de la moción (que cita cada Exhibit por
+    nombre en una sola oración, ej. "...Declaration...(Exhibit A), Proof of
+    no contact...(Exhibit B), the attached Disengagement Letter (Exhibit C)
+    and a Pro bono List (Exhibit D)."), incluyendo: quitarle el conector al
+    ítem que quede primero si el que originalmente era primero se eliminó,
+    y ponerle punto final al que quede último si el que originalmente
+    cerraba la oración (con su propio punto, ej. "(Exhibit D)." en
+    `motion-withdraw-no-cooperation`) se eliminó. Toda la configuración
+    (qué texto literal marca cada ítem, dónde está el conector, cuál cierra
+    la oración) vive en `field_map["notice_exhibits"]` de cada plantilla —
+    ver los comentarios largos en la propia función para el detalle de cada
+    clave.
+- **Por qué corren ANTES de `merge_runs_in_document_xml`**: esta función
+  fusiona runs de Word adyacentes con formato idéntico — exactamente el
+  tipo de run que `_apply_notice_exhibits` necesita que sigan SEPARADOS
+  para poder cortar solo el pedazo de un Exhibit sin tocar sus vecinos. Si
+  se llamara después, se arriesga a que la plantilla ya llegue "fusionada"
+  y los puntos de corte ya no existan. `motion-withdraw-no-cooperation` ya
+  traía sus runs separados de fábrica (los marcadores "(Exhibit X)" son
+  itálicos, formato distinto al texto de alrededor, así que nunca se
+  fusionan); `motion-withdraw-cancelation` **no** los traía separados —
+  se le hizo una edición quirúrgica one-time al `.docx` (dividir 3 runs en
+  9, mismo `rPr`, mismo texto renderizado, solo se movieron los límites de
+  `<w:r>`) para poder aplicarle el mismo mecanismo. Si se vuelve a tocar el
+  párrafo NOTICE de cualquier plantilla `motion-withdraw-*` a mano en Word,
+  hay que revisar que los runs de cada Exhibit sigan separados de los de
+  sus vecinos o esta función dejará de encontrar los cortes correctos (tira
+  `FillEngineError` con un mensaje claro si no encuentra un ancla — nunca
+  falla en silencio produciendo un documento a medio recortar).
+- Bug ya corregido en el camino: `_find_preceding_run` originalmente
+  buscaba `<w:r` con `rfind`, que también hace match parcial con `<w:rPr`
+  y `<w:rFonts` (substring) — encontraba el tag equivocado y dejaba XML mal
+  formado. Ahora usa el mismo patrón de dos búsquedas (`<w:r>` y `<w:r `)
+  que ya usaba `_find_enclosing_run`.
+- Otro bug ya corregido: insertar el punto final directo en la posición
+  "fin del `<w:r>`" lo deja como texto suelto entre elementos (fuera de
+  cualquier `<w:t>`), que Word/la extracción de texto ignora. Hay que
+  insertarlo DENTRO del `<w:t>` del marcador que queda último (justo antes
+  de su `</w:t>`) — ver `ultimo_marker_text_end` en `_apply_notice_exhibits`.
 
 ## Firma default de Lorenzo hardcodeada en `i589-tab-cover` — eliminada
 

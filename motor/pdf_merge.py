@@ -217,6 +217,7 @@ def combinar_portada_y_evidencia_exhibits(
     evidencia_por_letra: dict[str, list[Path]],
     pagina_inicial: int,
     out_path: Path,
+    numerar: bool = True,
 ) -> tuple[Path, int, list[str]]:
     """Como combinar_portada_y_evidencia, pero para plantillas con VARIOS
     puntos de inserción con nombre (un Exhibit por letra) en vez de un solo
@@ -229,6 +230,14 @@ def combinar_portada_y_evidencia_exhibits(
     esa letra. La numeración de página es continua a través de TODOS los
     exhibits, en el orden en que aparecen en el documento (no en el orden
     del dict).
+
+    `numerar` controla si se dibuja el número de página en cada página de
+    evidencia insertada — decisión explícita del usuario (2026-08-17): en
+    Motion to Withdraw NO se numeran las páginas de evidencia (a diferencia
+    de la regla general del resto del sistema, ver CLAUDE.md), así que
+    quien llama esta función para MTW pasa `numerar=False`. Por defecto
+    queda en True para no cambiar el comportamiento de otras plantillas que
+    lleguen a usar este mismo mecanismo de exhibits con nombre.
 
     Devuelve (ruta_del_pdf_final, última_página_usada, letras_no_encontradas)
     — `letras_no_encontradas` son letras con evidencia pero sin página
@@ -260,15 +269,16 @@ def combinar_portada_y_evidencia_exhibits(
                 except Exception as e:  # noqa: BLE001
                     raise PdfMergeError(f"No se pudo leer el PDF de evidencia '{Path(evidencia_pdf).name}': {e}")
                 for epage in reader.pages:
-                    # ver comentario equivalente en combinar_portada_y_evidencia:
-                    # sin esto, un PDF de evidencia escaneado con /Rotate
-                    # distinto de 0 termina con el número fuera de la
-                    # esquina inferior derecha.
-                    epage.transfer_rotation_to_content()
-                    width = float(epage.mediabox.width)
-                    height = float(epage.mediabox.height)
-                    overlay = _pagina_numero_overlay(width, height, numero)
-                    epage.merge_page(overlay)
+                    if numerar:
+                        # ver comentario equivalente en combinar_portada_y_evidencia:
+                        # sin esto, un PDF de evidencia escaneado con /Rotate
+                        # distinto de 0 termina con el número fuera de la
+                        # esquina inferior derecha.
+                        epage.transfer_rotation_to_content()
+                        width = float(epage.mediabox.width)
+                        height = float(epage.mediabox.height)
+                        overlay = _pagina_numero_overlay(width, height, numero)
+                        epage.merge_page(overlay)
                     writer.add_page(epage)
                     numero += 1
     ultima_pagina = numero - 1
