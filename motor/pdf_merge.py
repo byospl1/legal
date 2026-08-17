@@ -130,6 +130,14 @@ def combinar_portada_y_evidencia(
         except Exception as e:  # noqa: BLE001
             raise PdfMergeError(f"No se pudo leer el PDF de evidencia '{Path(evidencia_pdf).name}': {e}")
         for page in reader.pages:
+            # algunos PDFs de evidencia (sobre todo escaneos) traen /Rotate
+            # distinto de 0: la página se ve derecha porque el visor la gira
+            # al mostrarla, pero sus coordenadas siguen siendo las de ANTES
+            # de girar. Sin "quemar" ese giro en el contenido, el número que
+            # dibujamos en la esquina inferior derecha (en esas coordenadas
+            # sin girar) termina apareciendo en otra esquina — típicamente
+            # arriba a la derecha — una vez que el visor aplica el giro.
+            page.transfer_rotation_to_content()
             width = float(page.mediabox.width)
             height = float(page.mediabox.height)
             overlay = _pagina_numero_overlay(width, height, numero)
@@ -252,6 +260,11 @@ def combinar_portada_y_evidencia_exhibits(
                 except Exception as e:  # noqa: BLE001
                     raise PdfMergeError(f"No se pudo leer el PDF de evidencia '{Path(evidencia_pdf).name}': {e}")
                 for epage in reader.pages:
+                    # ver comentario equivalente en combinar_portada_y_evidencia:
+                    # sin esto, un PDF de evidencia escaneado con /Rotate
+                    # distinto de 0 termina con el número fuera de la
+                    # esquina inferior derecha.
+                    epage.transfer_rotation_to_content()
                     width = float(epage.mediabox.width)
                     height = float(epage.mediabox.height)
                     overlay = _pagina_numero_overlay(width, height, numero)
