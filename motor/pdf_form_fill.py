@@ -58,7 +58,10 @@ def _iniciales_nombre_primero(cliente_nombre: str) -> str:
     else:
         apellidos, nombres = "", partes[0]
     orden = f"{nombres} {apellidos}".strip()
-    palabras = [w for w in re.split(r"\s+", orden) if w]
+    # un apellido compuesto con guión (ej. "AMPIE-ACEVEDO") cuenta como DOS
+    # iniciales, una por cada parte -> "L.M.A.A." para "Ampie-Acevedo, Luz
+    # Marina", no "L.M.A." (el guión separa igual que un espacio).
+    palabras = [w for w in re.split(r"[\s-]+", orden) if w]
     if not palabras:
         return ""
     return "".join(f"{w[0].upper()}." for w in palabras)
