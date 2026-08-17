@@ -509,5 +509,7 @@ def generar_lote(
     for tab_group in exhibits:
         instancia_tab = dict(document_instance)
         instancia_tab["exhibits"] = [tab_group]
+        if tab_group.get("titulo"):
+            instancia_tab["titulo"] = tab_group["titulo"]
         resultados.append(generar_documento(case, instancia_tab, plantillas_dir, output_dir, verificar_pdf))
     return resultados

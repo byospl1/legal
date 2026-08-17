@@ -266,12 +266,21 @@ function onPlantillaChange() {
   actualizarUIPlantillaEfectiva();
 }
 
+function tituloOptionsFor(templateId) {
+  return (CATALOGOS.titulo && CATALOGOS.titulo[templateId]) || [];
+}
+
 function actualizarUIPlantillaEfectiva() {
   const plantilla = getPlantillaEfectiva();
   const templateId = plantilla ? plantilla.template_id : null;
-  const titulos = (CATALOGOS.titulo && CATALOGOS.titulo[templateId]) || [];
+  const titulos = tituloOptionsFor(templateId);
   $("#titulo").innerHTML = titulos.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join("");
-  $("#exhibitsSection").style.display = plantilla && plantilla.tiene_tabla_exhibits ? "block" : "none";
+  const tieneExhibits = plantilla && plantilla.tiene_tabla_exhibits;
+  $("#exhibitsSection").style.display = tieneExhibits ? "block" : "none";
+  // con Tabs de exhibits, el título se elige por Tab (no todos son de la
+  // misma categoría), así que el selector global se oculta para no
+  // confundir — sigue poblado por debajo, se usa como respaldo.
+  $("#tituloGlobalField").style.display = tieneExhibits ? "none" : "block";
 
   const camposExtra = (plantilla && plantilla.campos_extra) || [];
   const cont = $("#camposExtraSection");
@@ -393,6 +402,14 @@ async function addTabRow() {
   const n = tabCounter;
   const letraSugerida = $("#tabsList").children.length === 0 ? await siguienteLetra() : nextLetterFromLastRow();
 
+  const plantilla = getPlantillaEfectiva();
+  const templateId = plantilla ? plantilla.template_id : null;
+  const titulos = tituloOptionsFor(templateId);
+  const tituloActual = $("#titulo").value;
+  const tituloOptionsHtml = titulos
+    .map((t) => `<option value="${escapeHtml(t)}"${t === tituloActual ? " selected" : ""}>${escapeHtml(t)}</option>`)
+    .join("");
+
   const div = document.createElement("div");
   div.className = "tab-card";
   div.dataset.n = n;
@@ -410,6 +427,10 @@ async function addTabRow() {
       <div class="field">
         <label>Páginas (ej. 15-29)</label>
         <input type="text" class="tab-paginas" placeholder="1-12">
+      </div>
+      <div class="field">
+        <label>Título del documento de este Tab</label>
+        <select class="tab-titulo">${tituloOptionsHtml}</select>
       </div>
     </div>
     <div class="categorias">
@@ -854,6 +875,8 @@ function collectExhibits() {
   return cards.map((card) => {
     const letra = card.querySelector(".tab-letra").value.trim();
     const paginas = card.querySelector(".tab-paginas").value.trim();
+    const tituloSel = card.querySelector(".tab-titulo");
+    const titulo = tituloSel ? tituloSel.value : null;
     const categorias = categoriasMarcadas(card);
     const necesitaPais = categorias.includes("form_of_identity") || categorias.includes("country_conditions");
     const pais = necesitaPais ? card.querySelector(".tab-pais").value.trim() : null;
@@ -883,7 +906,7 @@ function collectExhibits() {
           evidencia_id: doc.evidencia_id,
         }))
       : [];
-    return { letra, paginas, categorias, pais, anio_cc, anio_osac, tipo_fee, evidencias, identidades, documentos_se };
+    return { letra, paginas, titulo, categorias, pais, anio_cc, anio_osac, tipo_fee, evidencias, identidades, documentos_se };
   });
 }
 
@@ -919,7 +942,7 @@ async function generarDocumento() {
 
   const document_instance = {
     template_id: templateId,
-    titulo: $("#titulo").value,
+    titulo: (exhibits[0] && exhibits[0].titulo) || $("#titulo").value,
     exhibits,
     exhibits_evidencia: collectMotionExhibitsEvidencia(),
     pagina_inicial_exhibits: parseInt($("#motionExhibitsPaginaInicial").value, 10) || 1,
