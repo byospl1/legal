@@ -19,8 +19,7 @@
     { "nombre": "preparador_mayus", "ids": ["910000024", "910000025"], "tipo": "texto", "opciones": [] }
   ],
   "firmas_imagen": [
-    { "nombre": "abogado", "categoria": "abogados", "ids": ["910000027"] },
-    { "nombre": "preparador", "categoria": "preparadores", "ids": ["910000026"] }
+    { "nombre": "abogado", "categoria": "abogados", "ids": ["910000027"] }
   ],
   "campos_automaticos_no_tocar": [
     { "tipo": "DATE", "descripcion": "Campo de Word autoactualizable (DATE \\@ \"MMMM d, yyyy\"), firma del cuerpo de la moción — no tocar" },

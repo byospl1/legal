@@ -1,5 +1,12 @@
 # Firmas escaneadas — cómo nombrar los archivos
 
+> **Nota:** la firma del paralegal/preparador (subcarpeta `preparadores/`)
+> ya **no** se inserta en ningún template — se quitó de los `field_map.json`
+> porque la imagen se sobreponía con otro texto del documento. Esta carpeta
+> y el código que la lee siguen existiendo (por si se necesita reactivar
+> más adelante), pero hoy ningún documento generado la usa. Solo la firma
+> del abogado (`abogados/`) sigue activa.
+
 Esta carpeta guarda las firmas escaneadas que el sistema pega automáticamente
 en los documentos generados (en vez de dejar la línea en blanco). Hay dos
 subcarpetas, una por tipo de firmante:
