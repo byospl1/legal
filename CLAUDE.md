@@ -55,6 +55,34 @@ Para agregar una plantilla nueva, seguir el procedimiento del `README.md`
   número siempre cae en la esquina visual correcta sin importar cómo venga
   guardado el PDF de origen.
 
+## Firma default de Lorenzo hardcodeada en `i589-tab-cover` — eliminada
+
+- El `.dotx` de `i589-tab-cover` (`00_TABS_TEAM_4.dotx`) traía, **quemada
+  directamente en el documento** (no vía `field_map.json` ni el mecanismo
+  `firmas_imagen` de `motor/fill_engine.py`), una imagen flotante
+  (`<w:drawing><wp:anchor ... allowOverlap="1">`) con la firma escaneada de
+  Lorenzo, posicionada de forma absoluta justo después del párrafo "...no
+  separate service was completed." del Proof of Service. Por ser un
+  `wp:anchor` con posición absoluta y `allowOverlap="1"` (no `wp:inline`),
+  se podía sobreponer con el texto de alrededor según cuánto ocupara ese
+  párrafo — de ahí el problema reportado por el usuario.
+- **Se eliminó por instrucción explícita del usuario** (2026-08-17): se
+  quitó el `<w:r>` con el `<w:drawing>` de `word/document.xml`, su
+  relationship (`rId9`) de `word/_rels/document.xml.rels`, y el archivo
+  `word/media/image1.png` — usando `motor.ooxml_utils.unpack`/`rezip`
+  directo sobre el `.dotx` (no hay mecanismo de campo para esto porque
+  nunca fue un campo, era una imagen fija de la plantilla).
+- Esta plantilla **no** usa `firmas_imagen`/`categoria: preparadores` (a
+  diferencia de `webex-motion` y las dos `motion-withdraw-*`, que sí tienen
+  ese mecanismo dinámico intacto — ver la sección de arriba). Si en algún
+  momento se quiere una firma de preparador dinámica en `i589-tab-cover`,
+  habría que agregarla como SDT + entrada en `firmas_imagen`, no repetir el
+  patrón de imagen fija anclada.
+- **No volver a incrustar una imagen fija/anclada de firma en ningún
+  `.dotx`** — si se necesita una firma en una plantilla nueva, usar el
+  mecanismo dinámico existente (SDT + `firmas_imagen` en `field_map.json`),
+  que inserta la imagen como `wp:inline` (no flota, no se sobrepone).
+
 ## Archivos que NO se deben modificar sin instrucción explícita
 
 - `plantillas/*/*.dotx` y `plantillas/*/*.docx` — plantillas originales del
