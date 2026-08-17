@@ -59,6 +59,11 @@
       "nombre": "abogado",
       "categoria": "abogados",
       "ids": ["900000025"]
+    },
+    {
+      "nombre": "preparador",
+      "categoria": "preparadores",
+      "ids": ["900000026"]
     }
   ],
   "campos_automaticos_no_tocar": [

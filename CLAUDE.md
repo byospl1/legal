@@ -55,31 +55,6 @@ Para agregar una plantilla nueva, seguir el procedimiento del `README.md`
   número siempre cae en la esquina visual correcta sin importar cómo venga
   guardado el PDF de origen.
 
-## Firma del paralegal/preparador — eliminada de los templates (decidido explícitamente)
-
-- Los 4 templates que en algún momento insertaban la firma escaneada del
-  paralegal (`webex-motion`, `motion-withdraw-cancelation`,
-  `motion-withdraw-no-cooperation` vía `firmas_imagen` en `field_map.json`,
-  y `eoir-33-change-address` vía la clave `firma_paralegal_imagen`) **ya NO
-  la insertan** — esas entradas se quitaron de los 4 `field_map.json`. La
-  causa: la imagen de la firma del paralegal se sobreponía con otro texto
-  del documento (en el EOIR-33 esto ya estaba señalado en un comentario del
-  propio código, `motor/pdf_form_fill.py`, por espacio insuficiente junto al
-  checkbox "No service needed...").
-- La firma del **abogado** sigue funcionando igual (`categoria: "abogados"`
-  en `firmas_imagen`) — solo se quitó la del paralegal.
-- El campo de texto `preparador` (nombre del paralegal, no la imagen) sigue
-  vivo donde ya se usaba como texto plano (ej. "name - proof of service" en
-  el EOIR-33) — eso no se tocó, solo la imagen de la firma.
-- El mecanismo genérico en código (`_apply_firmas_imagen` en
-  `motor/fill_engine.py`, `_firma_paralegal_path`/`firma_paralegal_imagen`
-  en `motor/pdf_form_fill.py`, y la carpeta `firmas/preparadores/`) **no se
-  borró** — sigue siendo genérico por categoría, simplemente ningún
-  `field_map.json` lo referencia ya. No volver a agregar
-  `"categoria": "preparadores"` a ningún `firmas_imagen` ni a
-  `firma_paralegal_imagen` sin confirmar antes con el usuario — fue removido
-  a propósito, no es un descuido.
-
 ## Archivos que NO se deben modificar sin instrucción explícita
 
 - `plantillas/*/*.dotx` y `plantillas/*/*.docx` — plantillas originales del

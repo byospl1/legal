@@ -14,5 +14,6 @@
     "date - proof of service": "fecha_hoy"
   },
   "casilla_no_service_needed": "No Service Needed",
-  "firma_cliente_iniciales": { "campo_pdf": "Signature1", "pagina": 0 }
+  "firma_cliente_iniciales": { "campo_pdf": "Signature1", "pagina": 0 },
+  "firma_paralegal_imagen": { "campo_pdf": "Signature2", "pagina": 0, "categoria": "preparadores" }
 }
