@@ -107,8 +107,8 @@ function renderSalidas(salidas) {
       .map((p, i) => `<a href="/output/_preview/${s.preview_dir}/${p}" target="_blank">pág. ${i + 1}</a>`)
       .join(" · ");
     tr.innerHTML = `
-      <td><a href="/output/${s.docx}" download>${s.docx}</a></td>
-      <td>${s.pdf ? `<a href="/output/${s.pdf}" target="_blank">Ver PDF</a>` : '<span class="muted">no generado</span>'}</td>
+      <td>${s.docx ? `<a href="/output/${s.docx}" download>${s.docx}</a>` : '<span class="muted">—</span>'}</td>
+      <td>${s.pdf ? `<a href="/output/${s.pdf}" download>${s.pdf}</a>` : '<span class="muted">no generado</span>'}</td>
       <td>${previewLinks || '<span class="muted">—</span>'}</td>
     `;
     tbody.appendChild(tr);
@@ -965,8 +965,9 @@ async function generarDocumento() {
         html += `<div class="status err">${escapeHtml(doc.evidencia_error)}</div>`;
       }
       html += `<div class="result-links">
-        <a href="${doc.docx_url}" download>Descargar .docx</a>
+        ${doc.docx_url ? `<a href="${doc.docx_url}" download>Descargar .docx</a>` : ""}
         ${doc.pdf_url ? `<a href="${doc.pdf_url}" target="_blank">Ver PDF</a>` : ""}
+        ${doc.pdf_url && !doc.docx_url ? `<a href="${doc.pdf_url}" download>Descargar PDF</a>` : ""}
       </div>`;
       if (doc.preview_urls && doc.preview_urls.length) {
         html += `<div class="previews">` + doc.preview_urls.map((u) => `<a href="${u}" target="_blank"><img src="${u}"></a>`).join("") + `</div>`;

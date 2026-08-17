@@ -93,8 +93,10 @@ def _registro_plantillas() -> dict:
 
 def _list_salidas() -> list[dict]:
     salidas = []
-    for docx_path in sorted(OUTPUT_DIR.glob("*.docx"), key=lambda p: p.stat().st_mtime, reverse=True):
+    pdfs_con_docx = set()
+    for docx_path in OUTPUT_DIR.glob("*.docx"):
         pdf_path = docx_path.with_suffix(".pdf")
+        pdfs_con_docx.add(pdf_path.name)
         preview_dir = OUTPUT_DIR / "_preview" / docx_path.stem
         previews = sorted(p.name for p in preview_dir.glob("*.jpg")) if preview_dir.exists() else []
         salidas.append(
@@ -103,8 +105,28 @@ def _list_salidas() -> list[dict]:
                 "pdf": pdf_path.name if pdf_path.exists() else None,
                 "previews": previews,
                 "preview_dir": docx_path.stem,
+                "mtime": docx_path.stat().st_mtime,
             }
         )
+    # plantillas tipo "pdf_form" (ej. EOIR-33) no generan .docx — su PDF es
+    # el archivo principal, no un derivado de verificación.
+    for pdf_path in OUTPUT_DIR.glob("*.pdf"):
+        if pdf_path.name in pdfs_con_docx:
+            continue
+        preview_dir = OUTPUT_DIR / "_preview" / pdf_path.stem
+        previews = sorted(p.name for p in preview_dir.glob("*.jpg")) if preview_dir.exists() else []
+        salidas.append(
+            {
+                "docx": None,
+                "pdf": pdf_path.name,
+                "previews": previews,
+                "preview_dir": pdf_path.stem,
+                "mtime": pdf_path.stat().st_mtime,
+            }
+        )
+    salidas.sort(key=lambda s: s["mtime"], reverse=True)
+    for s in salidas:
+        del s["mtime"]
     return salidas
 
 
@@ -320,6 +342,19 @@ def _resolver_paginas_evidencia(pagina_inicial_lote: int, exhibits: list[dict]) 
     return pagina
 
 
+def _es_plantilla_pdf_form(template_id: str | None) -> bool:
+    """Las plantillas .docx se llenan manipulando content controls OOXML
+    (motor.fill_engine); EOIR-33 es un PDF oficial con campos de formulario
+    reales (AcroForm) y sigue un camino de generación distinto — ver
+    motor.pdf_form_fill."""
+    if not template_id:
+        return False
+    field_map_path = PLANTILLAS_DIR / template_id / "field_map.json"
+    if not field_map_path.exists():
+        return False
+    return json.loads(field_map_path.read_text(encoding="utf-8")).get("tipo") == "pdf_form"
+
+
 @app.post("/api/generar")
 def api_generar():
     body = request.get_json(force=True)
@@ -334,6 +369,28 @@ def api_generar():
     case = load_case(case_id)
     if case is None:
         return jsonify({"error": "Caso no encontrado"}), 404
+
+    if _es_plantilla_pdf_form(document_instance.get("template_id")):
+        from motor.pdf_form_fill import PdfFormFillError, generar_pdf_formulario
+
+        try:
+            resultado = generar_pdf_formulario(case, document_instance, PLANTILLAS_DIR, OUTPUT_DIR)
+        except PdfFormFillError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:  # noqa: BLE001
+            traceback.print_exc()
+            return jsonify({"error": f"Error inesperado generando el documento: {e}"}), 500
+
+        documento = {
+            "docx_url": None,
+            "pdf_url": f"/output/{resultado.pdf_path.name}",
+            "preview_urls": [f"/output/_preview/{resultado.pdf_path.stem}/{p.name}" for p in resultado.preview_images],
+            "validation_ok": resultado.validation_ok,
+            "validation_errors": resultado.validation_errors,
+            "pdf_generado": True,
+            "evidencia_fusionada": False,
+        }
+        return jsonify({"documentos": [documento], "siguiente_pagina": case.get("siguiente_pagina", 1)})
 
     exhibits = document_instance.get("exhibits") or []
     tiene_evidencia = any(

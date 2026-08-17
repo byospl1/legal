@@ -15,6 +15,35 @@
       "tiene_tabla_exhibits": false
     },
     {
+      "template_id": "eoir-33-change-address",
+      "nombre": "EOIR-33 — Change of Address/Contact Information Form",
+      "archivo": "eoir-33-change-address/EOIR_33.pdf",
+      "field_map": "eoir-33-change-address/field_map.json",
+      "tiene_tabla_exhibits": false,
+      "campos_extra": [
+        {
+          "nombre": "direccion_anterior",
+          "etiqueta": "Dirección ANTERIOR — Number, Street, Apartment",
+          "placeholder": "ej. 330 NW 12 AVE"
+        },
+        {
+          "nombre": "ciudad_anterior",
+          "etiqueta": "Dirección ANTERIOR — City, State, ZIP",
+          "placeholder": "ej. MIAMI, FLORIDA 33127"
+        },
+        {
+          "nombre": "direccion_actual",
+          "etiqueta": "Dirección ACTUAL — Number, Street, Apartment",
+          "placeholder": "ej. 2203 CUSTER WAY"
+        },
+        {
+          "nombre": "ciudad_actual",
+          "etiqueta": "Dirección ACTUAL — City, State, ZIP",
+          "placeholder": "ej. ATLANTA, GA 30316"
+        }
+      ]
+    },
+    {
       "grupo_id": "motion-withdraw",
       "nombre": "Motion to Withdraw as Counsel",
       "variantes": [
