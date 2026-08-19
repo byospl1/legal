@@ -103,6 +103,9 @@
       ]
     }
   ],
+  "firmas_imagen": [
+    { "nombre": "preparador", "categoria": "preparadores", "ids": ["930000001"] }
+  ],
   "campos_automaticos_no_tocar": [
     {
       "tipo": "SEQ",

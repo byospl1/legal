@@ -160,12 +160,29 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   `word/media/image1.png` — usando `motor.ooxml_utils.unpack`/`rezip`
   directo sobre el `.dotx` (no hay mecanismo de campo para esto porque
   nunca fue un campo, era una imagen fija de la plantilla).
-- Esta plantilla **no** usa `firmas_imagen`/`categoria: preparadores` (a
-  diferencia de `webex-motion` y las dos `motion-withdraw-*`, que sí tienen
-  ese mecanismo dinámico intacto — ver la sección de arriba). Si en algún
-  momento se quiere una firma de preparador dinámica en `i589-tab-cover`,
-  habría que agregarla como SDT + entrada en `firmas_imagen`, no repetir el
-  patrón de imagen fija anclada.
+- **Actualización (2026-08-19): sí tiene `firmas_imagen` de preparador,
+  agregado a pedido del usuario** (reportó que su firma en
+  `firmas/preparadores/Lorenzo Bracamontes.png` nunca aparecía en el
+  documento generado — la plantilla solo escribía el nombre como texto).
+  Se agregó siguiendo el mismo patrón que `webex-motion`: en
+  `word/document.xml` hay una línea de firma escrita como texto literal
+  (`_______________________`, un solo `<w:r>` que es todo el contenido de
+  su propio `<w:p>`, justo antes del párrafo con el SDT del nombre del
+  preparador en el bloque final de "Respectfully submitted") — se envolvió
+  ese `<w:r>` en un `<w:sdt>` nuevo (`<w:id w:val="930000001"/>`, mismo
+  `rPr` copiado al `sdtPr` que ya traía el run) y se registró en
+  `field_map.json` → `"firmas_imagen": [{"nombre": "preparador",
+  "categoria": "preparadores", "ids": ["930000001"]}]`. Edición hecha con
+  `motor.ooxml_utils.unpack`/`rezip` directo sobre el `.dotx` (no hay UI
+  para esto, es cirugía de plantilla). Verificado con
+  `generar_documento` real: con PNG presente inserta la imagen `wp:inline`
+  (relationship + `word/media/`, nunca ancla flotante — no repetir el
+  patrón de imagen fija anclada de la sección de arriba); sin PNG cae al
+  mismo texto `_______________________` de siempre, sin romper nada.
+  `webex-motion` y las dos `motion-withdraw-*` ya tenían este mecanismo
+  desde antes — con esto las cuatro plantillas que llevan firma de
+  preparador (todas menos `eoir-33-change-address`, que es un AcroForm fijo)
+  lo tienen.
 - **No volver a incrustar una imagen fija/anclada de firma en ningún
   `.dotx`** — si se necesita una firma en una plantilla nueva, usar el
   mecanismo dinámico existente (SDT + `firmas_imagen` en `field_map.json`),
