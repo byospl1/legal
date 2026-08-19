@@ -61,6 +61,18 @@ def _sanitize_filename_part(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _sanitize_output_name_part(text: str) -> str:
+    """Como `_sanitize_filename_part`, pero además sin comas ni espacios
+    (convertidos a "_") — para el nombre del ARCHIVO DE SALIDA (el que el
+    usuario sube tal cual a portales externos como EOIR ECAS, que rechazan
+    cualquier nombre con comas/espacios: "File name must be alphanumeric").
+    No usar esto para `_sanitize_filename_part` en general (ej. búsqueda de
+    PNG de firma en firmas/) porque esos archivos sí están guardados en
+    disco con espacios en el nombre."""
+    text = _sanitize_filename_part(text).replace(",", "")
+    return re.sub(r"\s+", "_", text.strip())
+
+
 def _tipo_tab_label(document_instance: dict) -> str:
     exhibits = document_instance.get("exhibits") or []
     if exhibits:
@@ -75,7 +87,7 @@ def _unique_output_path(output_dir: Path, base_name: str, suffix: str = ".docx")
     candidate = output_dir / f"{base_name}{suffix}"
     n = 2
     while candidate.exists():
-        candidate = output_dir / f"{base_name} ({n}){suffix}"
+        candidate = output_dir / f"{base_name}_{n}{suffix}"
         n += 1
     return candidate
 
@@ -689,9 +701,9 @@ def generar_documento(
         )
         content_types_path.write_text(ct, encoding="utf-8")
 
-        cliente = _sanitize_filename_part(case["cliente_nombre"])
-        a_num = _sanitize_filename_part(case["a_number"]).replace(" ", "")
-        tipo = _sanitize_filename_part(_tipo_tab_label(document_instance))
+        cliente = _sanitize_output_name_part(case["cliente_nombre"])
+        a_num = re.sub(r"\D", "", case["a_number"])
+        tipo = _sanitize_output_name_part(_tipo_tab_label(document_instance))
         base_name = f"{cliente}_{a_num}_{tipo}"
         # nunca sobrescribe una corrida anterior (ver _unique_output_path) —
         # en Windows, sobrescribir un archivo que sigue abierto en Word
