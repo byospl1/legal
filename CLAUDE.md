@@ -245,30 +245,25 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   `plural_riders`), agregar sus frases al `field_map` correspondiente tras
   revisar su texto — el mecanismo ya es genérico, no hay que tocar código.
 
-## `webex-motion`: saltos de página por sección (2026-08-19)
+## `webex-motion`: saltos de página por sección — INTENTADO Y REVERTIDO (2026-08-19)
 
-- **Problema reportado (screenshot)**: la plantilla NO usaba saltos de página
-  reales entre secciones; los fingía con **runs largos de párrafos vacíos**
-  (28 vacíos tras el TABLE OF CONTENTS, 13 tras el bloque de firma de la
-  moción). Como esos rellenos dependen del render exacto, una línea se
-  desbordaba y quedaba huérfana en una página casi vacía (la línea "Date: ___
-  By: Court Staff" del Certificate of Service se iba sola a otra hoja).
-- **Fix pedido por el usuario**: dividir por secciones con saltos de página
-  reales (`<w:pageBreakBefore/>`), cada bloque con caption propio en su
-  página: portada → TABLE OF CONTENTS → cuerpo de la moción → ORDER OF THE
-  IMMIGRATION JUDGE → PROOF OF SERVICE. Se agregó `pageBreakBefore` al primer
-  párrafo de las 3 secciones que no lo tenían (el TOC ya lo traía) y se
-  quitaron los 2 runs de vacíos de relleno. Edición one-time con `lxml`
-  (preserva prefijos `w:`) + `ooxml_utils.unpack`/`rezip` directo sobre el
-  `.docx`. Un `pageBreakBefore` es determinista (esa sección arranca hoja
-  nueva sin depender de métricas de fuente), así que el fix es verificable sin
-  render (LibreOffice roto en el sandbox): se validó por conteo de breaks (4)
-  y de párrafos vacíos consecutivos (máx bajó de 28 a 6 = solo espaciado
-  interno legítimo).
-- **No volver a fingir saltos de página con párrafos vacíos** en ninguna
-  plantilla; usar `<w:pageBreakBefore/>` en el primer párrafo de la sección.
-  Las `motion-withdraw-*` no se revisaron para esto (fuera del pedido); si
-  muestran el mismo desborde, aplicar el mismo enfoque.
+- **Contexto**: la plantilla finge los saltos de página entre secciones con
+  runs largos de párrafos vacíos (28 tras el TABLE OF CONTENTS, 13 tras el
+  bloque de firma). Eso hacía que una línea se desbordara y quedara huérfana
+  en una hoja casi vacía (la línea "Date: ___ By: Court Staff" del Certificate
+  of Service).
+- **Se intentó** reemplazar esos rellenos por `<w:pageBreakBefore/>` reales al
+  inicio de cada sección (cuerpo de la moción, ORDER, PROOF OF SERVICE; el TOC
+  ya lo traía). **El usuario lo revirtió: "se arruinó el formato".** Se
+  restauró la estructura original de la plantilla (solo se mantuvo la
+  eliminación de firmas quemadas), volviendo a los rellenos de párrafos
+  vacíos y al único `pageBreakBefore` del TOC.
+- **No volver a aplicar el enfoque de `pageBreakBefore` por sección a
+  `webex-motion`** sin que el usuario lo pida explícitamente y valide el
+  render en su Word — no se pudo verificar visualmente en el sandbox
+  (LibreOffice roto) y el resultado real rompió el formato. Si se retoma el
+  problema del desborde, hay que hacerlo con render real a la vista, no a
+  ciegas por estructura.
 
 ## Archivos que NO se deben modificar sin instrucción explícita
 
