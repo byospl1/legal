@@ -188,6 +188,88 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   mecanismo dinámico existente (SDT + `firmas_imagen` en `field_map.json`),
   que inserta la imagen como `wp:inline` (no flota, no se sobrepone).
 
+## `webex-motion` traía DOS firmas ancladas quemadas — eliminadas (2026-08-19)
+
+- Mismo problema que `i589-tab-cover` de arriba, pero en `MOTION_FOR_WEBEX.docx`
+  y por partida doble: la plantilla traía **dos** imágenes flotantes
+  (`<w:drawing><wp:anchor ... allowOverlap="1">`) quemadas — `word/media/image1.png`
+  (firma escaneada del abogado, `rId9`) y `word/media/image2.png` (firma del
+  preparador, `rId11`)— justo encima de las líneas de firma. Como la plantilla
+  YA tiene el mecanismo dinámico `firmas_imagen` (SDT `900000025` abogado,
+  `900000026` preparador), al generar con PNG presente se dibujaba la firma
+  nueva ENCIMA de la vieja anclada: **la firma salía dos veces, sobrepuesta**
+  (reportado por el usuario con screenshot). Fix: se quitaron los dos `<w:r>`
+  con `<w:drawing>` de `word/document.xml`, sus relationships `rId9`/`rId11`, y
+  los dos `word/media/image*.png`, con `ooxml_utils.unpack`/`rezip` directo
+  sobre el `.docx` (cada drawing estaba solo en su propio `<w:p>`; quitar el
+  run deja un párrafo vacío inocuo). Ahora la única firma es la dinámica
+  `wp:inline` de `firmas_imagen`.
+- **Regla general confirmada por el usuario (2026-08-19): NINGUNA plantilla
+  debe llevar una firma quemada/anclada** — cuando se coloca la firma nueva
+  (dinámica) no se debe sobreponer a una vieja. Ya revisadas las 5 plantillas
+  editables: `i589-tab-cover` y `webex-motion` limpias; las 3 `motion-withdraw-*`
+  solo tienen un Text Box vacío (una forma, sin imagen ni firma) — no hay más
+  firmas quemadas que quitar. Si se agrega una plantilla nueva, verificar que
+  no traiga `wp:anchor` con imagen de firma antes de registrarla.
+
+## Pluralización "Respondent(s)" con riders — `field_map["plural_riders"]`
+
+- **Regla del usuario (2026-08-19)**: cuando un caso tiene riders (varios
+  respondents → el nombre sale como "NOMBRE et al", ver
+  `case_store.nombre_para_documento`), los textos FIJOS de la plantilla que
+  dicen "Respondent"/"Respondent's" y su concordancia de verbo deben
+  pluralizarse ("moves"→"move", "does not oppose"→"do not oppose",
+  "Respondent's counsel"→"Respondents' counsel", etc.). El disparador es
+  `bool(case.get("riders"))`.
+- Mecanismo genérico en `motor/fill_engine._apply_plural_riders(document_xml,
+  field_map)`: aplica una lista CURADA de frases exactas
+  `field_map["plural_riders"]` (cada ítem `{"buscar": <singular literal>,
+  "reemplazar": <plural>}`) como reemplazo literal sobre el XML ya con campos
+  resueltos. Corre para CUALQUIER plantilla que tenga la clave, cuando hay
+  riders. Antes existía `_apply_plural_respondents` hardcodeada solo para
+  `i589-tab-cover`; se generalizó y sus dos reemplazos se migraron a
+  `field_map["plural_riders"]` de esa plantilla (`>Respondent<`→`>Respondents<`
+  y `A True Copy of the Respondent's `→`...Respondents' `).
+- **Por qué frases curadas y NO un `replace` genérico de "Respondent"**: hay
+  "Respondent" que NO se deben tocar — el placeholder del SDT del caption "In
+  the Matter of: {nombre}" es literalmente la palabra "Respondent" (se
+  reemplaza por el nombre vía `_apply_field_values`), y la tabla Form of
+  Identity del I-589 distingue por persona ("Respondent's"/"Rider's {nombre}")
+  y nunca se pluraliza. Por eso cada regla es una frase larga inequívoca (o
+  con delimitadores `>...<`) que solo matchea donde debe. Cada `buscar` debe
+  aparecer 1 sola vez; si una regla no encuentra su `buscar` (plantilla
+  editada a mano) se avisa por consola pero NO se aborta —la concordancia es
+  cosmética y nunca debe bloquear un escrito—. `webex-motion` tiene 11 reglas
+  (incluye la sección ORDER: "The Respondents do not oppose", "must comply").
+- Si se agregan riders a otra plantilla (`motion-withdraw-*` aún no tienen
+  `plural_riders`), agregar sus frases al `field_map` correspondiente tras
+  revisar su texto — el mecanismo ya es genérico, no hay que tocar código.
+
+## `webex-motion`: saltos de página por sección (2026-08-19)
+
+- **Problema reportado (screenshot)**: la plantilla NO usaba saltos de página
+  reales entre secciones; los fingía con **runs largos de párrafos vacíos**
+  (28 vacíos tras el TABLE OF CONTENTS, 13 tras el bloque de firma de la
+  moción). Como esos rellenos dependen del render exacto, una línea se
+  desbordaba y quedaba huérfana en una página casi vacía (la línea "Date: ___
+  By: Court Staff" del Certificate of Service se iba sola a otra hoja).
+- **Fix pedido por el usuario**: dividir por secciones con saltos de página
+  reales (`<w:pageBreakBefore/>`), cada bloque con caption propio en su
+  página: portada → TABLE OF CONTENTS → cuerpo de la moción → ORDER OF THE
+  IMMIGRATION JUDGE → PROOF OF SERVICE. Se agregó `pageBreakBefore` al primer
+  párrafo de las 3 secciones que no lo tenían (el TOC ya lo traía) y se
+  quitaron los 2 runs de vacíos de relleno. Edición one-time con `lxml`
+  (preserva prefijos `w:`) + `ooxml_utils.unpack`/`rezip` directo sobre el
+  `.docx`. Un `pageBreakBefore` es determinista (esa sección arranca hoja
+  nueva sin depender de métricas de fuente), así que el fix es verificable sin
+  render (LibreOffice roto en el sandbox): se validó por conteo de breaks (4)
+  y de párrafos vacíos consecutivos (máx bajó de 28 a 6 = solo espaciado
+  interno legítimo).
+- **No volver a fingir saltos de página con párrafos vacíos** en ninguna
+  plantilla; usar `<w:pageBreakBefore/>` en el primer párrafo de la sección.
+  Las `motion-withdraw-*` no se revisaron para esto (fuera del pedido); si
+  muestran el mismo desborde, aplicar el mismo enfoque.
+
 ## Archivos que NO se deben modificar sin instrucción explícita
 
 - `plantillas/*/*.dotx` y `plantillas/*/*.docx` — plantillas originales del

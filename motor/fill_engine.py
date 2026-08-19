@@ -540,23 +540,46 @@ def _apply_exhibits(document_xml: str, tab_groups: list[dict], plural: bool = Fa
     return document_xml
 
 
-def _apply_plural_respondents(document_xml: str) -> str:
-    """Textos fijos de la plantilla FUERA de la tabla de exhibits:
-    "Respondent" standalone antes de "In Removal Proceedings", y
-    "Respondent's" en el párrafo de Proof of Service. Deben decir
-    "Respondents"/"Respondents'" cuando el caso tiene riders.
+def _apply_plural_riders(document_xml: str, field_map: dict) -> str:
+    """Pluraliza los textos FIJOS de la plantilla (fuera de campos/SDT) que
+    en singular dicen "Respondent"/"Respondent's" + su concordancia de verbo
+    ("moves"->"move", "does not oppose"->"do not oppose", etc.) cuando el
+    caso tiene riders (varios respondents, "et al").
 
-    Los ítems de la tabla de exhibits ya se pluralizan (o no, en el caso
-    de Form of Identity, que distingue por persona con "Respondent's" /
-    "Rider's {nombre}" y nunca debe pluralizarse) al construirse — ver
-    _apply_exhibits/build_exhibit_table. Por eso aquí se usa un reemplazo
-    puntual por frase exacta, no un reemplazo genérico de "Respondent's "
-    en todo el documento, que le pisaría el singular correcto a Form of
-    Identity."""
-    document_xml = document_xml.replace(">Respondent<", ">Respondents<")
-    document_xml = document_xml.replace(
-        "A True Copy of the Respondent’s ", "A True Copy of the Respondents’ "
-    )
+    No es un reemplazo genérico de "Respondent" en todo el documento —eso
+    pisaría el singular correcto que sí deben conservar ciertos bloques (ej.
+    la tabla Form of Identity del I-589, que distingue por persona con
+    "Respondent's" / "Rider's {nombre}" y nunca se pluraliza; o el SDT del
+    caption "In the Matter of: {nombre}" cuyo placeholder es literalmente la
+    palabra "Respondent")— sino una lista CURADA de frases exactas por
+    plantilla, en field_map["plural_riders"]. Cada regla es
+    {"buscar": <texto singular literal>, "reemplazar": <texto plural>}, y se
+    aplica como reemplazo literal sobre el XML ya con los campos resueltos.
+
+    El autor de cada regla es responsable de que "buscar" sea inequívoco:
+    o una frase larga que solo aparece donde debe pluralizarse, o con los
+    delimitadores de nodo de texto (">Respondent<") para forzar la palabra
+    suelta y no un prefijo de "Respondent's". Si una regla no encuentra su
+    "buscar" (p.ej. porque se editó a mano el texto de la plantilla), se
+    avisa por consola pero NO se aborta la generación: la concordancia de
+    plural es cosmética y nunca debe bloquear el armado de un escrito.
+
+    Es texto de escritos legales redactado/revisado por el despacho; la
+    lista de frases de cada plantilla vive en su field_map.json justamente
+    para que un abogado pueda revisarla/ajustarla sin tocar código."""
+    reglas = field_map.get("plural_riders") or []
+    faltantes = []
+    for regla in reglas:
+        buscar = regla["buscar"]
+        if buscar not in document_xml:
+            faltantes.append(buscar)
+            continue
+        document_xml = document_xml.replace(buscar, regla["reemplazar"])
+    if faltantes:
+        print(
+            "Aviso: no se pudo pluralizar (riders) las siguientes frases "
+            f"—texto de plantilla cambiado?—: {faltantes}"
+        )
     return document_xml
 
 
@@ -683,12 +706,13 @@ def generar_documento(
 
         document_xml = _apply_firmas_imagen(document_xml, tmp_path, field_map, case)
 
-        # _apply_plural_respondents busca frases EXACTAS fijas de la
-        # plantilla i589-tab-cover (">Respondent<", "A True Copy of the
-        # Respondent's ") -- no aplica a otras plantillas, cada una tiene su
-        # propia convención de singular/plural que aún no se automatiza.
-        if tiene_riders and template_id == "i589-tab-cover":
-            document_xml = _apply_plural_respondents(document_xml)
+        # Pluraliza los textos fijos "Respondent(...)" cuando hay riders,
+        # según la lista curada field_map["plural_riders"] de cada plantilla
+        # (cada plantilla tiene su propia redacción, por eso las frases van
+        # en su field_map, no hardcodeadas aquí). Plantillas sin esa clave
+        # (o casos sin riders) no cambian nada.
+        if tiene_riders:
+            document_xml = _apply_plural_riders(document_xml, field_map)
 
         doc_path.write_text(document_xml, encoding="utf-8")
 

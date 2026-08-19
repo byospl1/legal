@@ -7,49 +7,81 @@
   "grupos_sync_manual": [
     {
       "nombre": "abogado",
-      "ids": ["900000001", "900000010"],
+      "ids": [
+        "900000001",
+        "900000010"
+      ],
       "tipo": "texto",
       "opciones": []
     },
     {
       "nombre": "abogado_firma",
-      "ids": ["900000016"],
+      "ids": [
+        "900000016"
+      ],
       "tipo": "texto",
       "opciones": []
     },
     {
       "nombre": "cliente_nombre",
-      "ids": ["900000002", "900000006", "900000011", "900000012", "900000015", "900000017", "900000018", "900000021"],
+      "ids": [
+        "900000002",
+        "900000006",
+        "900000011",
+        "900000012",
+        "900000015",
+        "900000017",
+        "900000018",
+        "900000021"
+      ],
       "tipo": "texto",
       "opciones": []
     },
     {
       "nombre": "a_number",
-      "ids": ["900000007", "900000013", "900000019", "900000022"],
+      "ids": [
+        "900000007",
+        "900000013",
+        "900000019",
+        "900000022"
+      ],
       "tipo": "texto",
       "opciones": []
     },
     {
       "nombre": "corte_sede",
-      "ids": ["900000003", "900000004", "900000005"],
+      "ids": [
+        "900000003",
+        "900000004",
+        "900000005"
+      ],
       "tipo": "texto",
       "opciones": []
     },
     {
       "nombre": "juez",
-      "ids": ["900000008", "900000014", "900000020"],
+      "ids": [
+        "900000008",
+        "900000014",
+        "900000020"
+      ],
       "tipo": "texto",
       "opciones": []
     },
     {
       "nombre": "preparador",
-      "ids": ["900000023", "900000024"],
+      "ids": [
+        "900000023",
+        "900000024"
+      ],
       "tipo": "texto",
       "opciones": []
     },
     {
       "nombre": "proxima_audiencia",
-      "ids": ["900000009"],
+      "ids": [
+        "900000009"
+      ],
       "tipo": "texto",
       "opciones": []
     }
@@ -58,12 +90,16 @@
     {
       "nombre": "abogado",
       "categoria": "abogados",
-      "ids": ["900000025"]
+      "ids": [
+        "900000025"
+      ]
     },
     {
       "nombre": "preparador",
       "categoria": "preparadores",
-      "ids": ["900000026"]
+      "ids": [
+        "900000026"
+      ]
     }
   ],
   "campos_automaticos_no_tocar": [
@@ -80,5 +116,51 @@
       "descripcion": "Campo de Word autoactualizable (DATE \\@ \"M/d/yyyy\"), Certificate of Service — no tocar"
     }
   ],
-  "tiene_tabla_exhibits": false
+  "tiene_tabla_exhibits": false,
+  "plural_riders": [
+    {
+      "buscar": "COMES NOW Respondent",
+      "reemplazar": "COMES NOW Respondents"
+    },
+    {
+      "buscar": "respectfully moves the Court",
+      "reemplazar": "respectfully move the Court"
+    },
+    {
+      "buscar": "the Respondent and the undersigned Respondent’s counsel",
+      "reemplazar": "the Respondents and the undersigned Respondents’ counsel"
+    },
+    {
+      "buscar": "allows Respondent and Respondent’s Counsel",
+      "reemplazar": "allows Respondents and Respondents’ Counsel"
+    },
+    {
+      "buscar": "Therefore, Respondent respectfully requests",
+      "reemplazar": "Therefore, Respondents respectfully request"
+    },
+    {
+      "buscar": "allows both Respondent and Respondent’s counsel",
+      "reemplazar": "allows both Respondents and Respondents’ counsel"
+    },
+    {
+      "buscar": "the Respondent’s Individual Hearing",
+      "reemplazar": "the Respondents’ Individual Hearing"
+    },
+    {
+      "buscar": "Upon consideration of Respondent’s",
+      "reemplazar": "Upon consideration of Respondents’"
+    },
+    {
+      "buscar": "The Respondent does not oppose the motion.",
+      "reemplazar": "The Respondents do not oppose the motion."
+    },
+    {
+      "buscar": "The Respondent must comply with DHS biometrics",
+      "reemplazar": "The Respondents must comply with DHS biometrics"
+    },
+    {
+      "buscar": "Attorney for Respondent,",
+      "reemplazar": "Attorney for Respondents,"
+    }
+  ]
 }

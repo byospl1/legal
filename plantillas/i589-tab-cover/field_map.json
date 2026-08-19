@@ -104,7 +104,13 @@
     }
   ],
   "firmas_imagen": [
-    { "nombre": "preparador", "categoria": "preparadores", "ids": ["930000001"] }
+    {
+      "nombre": "preparador",
+      "categoria": "preparadores",
+      "ids": [
+        "930000001"
+      ]
+    }
   ],
   "campos_automaticos_no_tocar": [
     {
@@ -120,5 +126,15 @@
       "descripcion": "Campo de Word autoactualizable (DATE \\@ &quot;MMMM d, yyyy&quot; ), no tocar"
     }
   ],
-  "tiene_tabla_exhibits": true
+  "tiene_tabla_exhibits": true,
+  "plural_riders": [
+    {
+      "buscar": ">Respondent<",
+      "reemplazar": ">Respondents<"
+    },
+    {
+      "buscar": "A True Copy of the Respondent’s ",
+      "reemplazar": "A True Copy of the Respondents’ "
+    }
+  ]
 }
