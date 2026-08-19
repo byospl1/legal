@@ -245,6 +245,31 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   `plural_riders`), agregar sus frases al `field_map` correspondiente tras
   revisar su texto — el mecanismo ya es genérico, no hay que tocar código.
 
+## `webex-motion`: el nombre del cliente en la firma se rompía con nombres largos (2026-08-19)
+
+- El párrafo del nombre bajo "Attorney for Respondent(s)," (el que sigue al
+  SDT `900000017`) posicionaba el texto con 5 `<w:tab/>` + 24 espacios
+  literales en el propio `<w:t>`, más `jc="both"` heredado por copiar el
+  párrafo vecino. Eso solo alineaba la PRIMERA línea — con un nombre largo
+  (típicamente varios respondents, "NOMBRE et al"), el párrafo envolvía a
+  una segunda línea que caía al margen izquierdo de la página (sin
+  sangría real que la sostuviera), y `jc="both"` estiraba con espaciado
+  raro la primera línea al justificarla.
+- Fix: se quitaron los tabs/espacios y el `jc="both"` de ESE párrafo
+  puntual, y se agregó `w:ind w:left="5040"` (twips, ≈3.5in — misma
+  posición visual que el hack anterior para nombres cortos). Con sangría
+  real, si el nombre envuelve, la segunda línea queda alineada bajo
+  "Attorney for Respondent(s)," en vez de saltar al margen — se adapta
+  solo según la longitud del nombre.
+- Las 3 plantillas `motion-withdraw-*` NO repiten el nombre del cliente en
+  su bloque de firma (solo dicen "Attorney for Respondent," sin nombre
+  debajo), así que este bug no les aplica — revisado y confirmado.
+- Si se vuelve a tocar el bloque de firma de `webex-motion` a mano en
+  Word, evitar reintroducir alineación con espacios/tabs literales para
+  campos de longitud variable (nombre, "et al", etc.) — usar sangría de
+  párrafo (`Formato > Párrafo > Sangría izquierda`) en vez de espaciar a
+  mano, para que el texto siga viéndose bien sin importar cuánto mida.
+
 ## `webex-motion`: saltos de página por sección — INTENTADO Y REVERTIDO (2026-08-19)
 
 - **Contexto**: la plantilla finge los saltos de página entre secciones con
