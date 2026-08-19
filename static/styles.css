@@ -266,7 +266,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ---------- Cards (Tabs, riders, documents) ---------- */
 
-.tab-card {
+.tab-card, .doc-se-row {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 16px 18px;

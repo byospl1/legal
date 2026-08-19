@@ -693,7 +693,7 @@ function renderDocumentosSE(card) {
     card._documentosSE
       .map(
         (doc) => `
-      <div class="tab-card doc-se-row" data-doc-id="${doc.id}" style="margin-top:8px;">
+      <div class="doc-se-row" data-doc-id="${doc.id}" style="margin-top:8px;">
         <div class="grid">
           <div class="field">
             <label style="font-weight:400;">Tipo de documento</label>
