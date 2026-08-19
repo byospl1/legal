@@ -184,11 +184,8 @@ def _supplemental_evidence_line_text(tipo: str | None, titulo: str | None) -> st
 
 
 def _build_supplemental_evidence_description(documentos: list[dict], plural: bool) -> str:
-    subtitle = _load("subtitle_supplemental_evidence")
     item_tpl = _load("item_declaration")
-    if plural:
-        subtitle = pluralizar_respondent(subtitle)
-    lineas = [subtitle]
+    lineas = []
     for doc in documentos:
         texto = _supplemental_evidence_line_text(doc.get("tipo"), doc.get("titulo"))
         linea = _set_first_t_text(item_tpl, texto)
@@ -201,7 +198,7 @@ def _build_supplemental_evidence_description(documentos: list[dict], plural: boo
 def _build_supplemental_evidence_pages(documentos: list[dict]) -> str:
     pages_value_tpl = _load("pages_value")
     blank = _set_first_t_text(pages_value_tpl, "")
-    lineas = [blank]
+    lineas = []
     for doc in documentos:
         info = doc.get("evidencia")
         if info and info.get("pagina_inicio") and info.get("num_paginas"):
