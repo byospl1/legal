@@ -46,7 +46,7 @@ CATEGORY_FRAGMENTS: dict[str, list[str]] = {
 TIPOS_SUPPLEMENTAL_EVIDENCE = ["Declaration", "Psychological Report", "News"]
 
 _TEXTO_DECLARATION = (
-    "Respondent’s Declaration for Support of Asylum Withholding of Removal and Relief Under CAT with English Translation."
+    "Respondent’s Declaration for Support of Asylum Withholding of Removal and Relief Under CAT."
 )
 _TEXTO_PSYCHOLOGICAL_REPORT = "Respondent’s Psychological Report."
 
