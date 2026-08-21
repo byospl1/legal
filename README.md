@@ -71,6 +71,26 @@ abrió `iniciar.bat`. Para apagarlo, ciérrala.
    tiene su propio contenido fijo.
 5. Agrega la plantilla a `plantillas/registro.json`.
 
+## Editar un `.dotx` a mano en Word
+
+Si abrís un `.dotx` con doble clic (o "Abrir" normal), Word no abre el
+archivo original: crea un **documento nuevo basado en la plantilla**
+(`Documento1`, etc.). Por eso al guardar Word pide "Guardar como" con un
+nombre nuevo en vez de dejarte sobrescribir la plantilla — es el
+comportamiento estándar de Word con archivos de plantilla, no una
+restricción del proyecto.
+
+Para editar el `.dotx` original:
+
+1. Clic derecho sobre el archivo → **Abrir** (no doble clic), o desde Word
+   con **Archivo → Abrir** navegando al archivo.
+2. Alternativa: renombrar temporalmente la extensión a `.docx`, editar, y
+   volver a ponerle `.dotx` al terminar.
+
+Las plantillas en `plantillas/*/*.dotx` y `*.docx` son las originales del
+despacho — hacé backup antes de tocarlas a mano, cualquier cambio de
+layout ahí afecta a todos los documentos que se generen después.
+
 ## Estructura de carpetas
 
 ```
