@@ -290,6 +290,36 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   problema del desborde, hay que hacerlo con render real a la vista, no a
   ciegas por estructura.
 
+## Tab de Country Conditions (CC/OSAC): años ya no son obligatorios los dos (2026-08-21)
+
+- **Regla del usuario (2026-08-21)**: en un Tab con categoría "Country
+  Conditions" (i589-tab-cover), si el usuario solo sube evidencia de UNO de
+  los dos ítems (Country Reports on Human Rights Practice **o** OSAC Crime
+  and Safety Report — a veces solo hay actualización de uno de los dos en
+  el sistema legal), ya no se le obliga a llenar el año del otro. Solo se
+  incluye en el documento el subitem con evidencia adjunta (el otro se
+  descarta, mismo mecanismo de `frag_indices_incluidos` que ya existía) y
+  solo su año es obligatorio.
+- **Sin evidencia subida** (modo manual, los dos subitems se incluyen
+  siempre) **se siguen pidiendo los dos años**, como antes — el cambio
+  aplica solo cuando hay evidencia adjunta para alguno de los dos.
+- Dos lugares tocados, ambos ya usaban `frag_indices_incluidos` para decidir
+  qué subitem incluir pero no lo consultaban para decidir qué año exigir:
+  - `motor/exhibit_builder._build_category_xml` (rama `country_conditions`):
+    ahora llama `frag_indices_incluidos` ANTES de validar/reemplazar, y solo
+    exige `anio_cc`/`anio_osac` si el índice correspondiente (1=Country
+    Reports, 2=OSAC) va a quedar incluido.
+  - `static/app.js` → `generarDocumento()`: la validación previa al submit
+    ahora mira `tg.evidencias.country_reports` / `.osac` (ya construido por
+    `collectExhibits()`) para saber cuál año es obligatorio, replicando la
+    misma regla que el backend (si no hay evidencia de ninguno de los dos,
+    exige ambos años igual que antes).
+- Si se retoca esta lógica, mantener sincronizados el frontend y
+  `_build_category_xml` — son dos validaciones independientes que deben
+  llegar a la misma conclusión sobre qué año es obligatorio, si no el
+  frontend puede bloquear con un error que el backend ya no exigiría (o
+  viceversa, dejar pasar algo que el backend igual rechaza).
+
 ## Archivos que NO se deben modificar sin instrucción explícita
 
 - `plantillas/*/*.dotx` y `plantillas/*/*.docx` — plantillas originales del

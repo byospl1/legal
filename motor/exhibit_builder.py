@@ -241,16 +241,24 @@ def _build_category_xml(
     if categoria == "country_conditions":
         if not pais:
             raise ValueError("country_conditions requiere 'pais'")
-        if not anio_cc:
-            raise ValueError("country_conditions requiere 'anio_cc'")
-        if not anio_osac:
-            raise ValueError("country_conditions requiere 'anio_osac'")
+        # Los años solo son obligatorios para el subitem que realmente va a
+        # quedar incluido (ver frag_indices_incluidos): si solo se subió
+        # evidencia de Country Reports, el subitem de OSAC se descarta más
+        # abajo y no debe bloquear la generación pidiendo un año que no se
+        # va a usar — y viceversa.
+        incluidos_preview = frag_indices_incluidos(categoria, evidencias)
         # "Country Conditions and Reports," -> "Country Conditions and Reports, {PAIS}"
         parts[0] = _replace_in_first_t(parts[0], "Reports,", f"Reports, {_xml_escape(pais)}")
-        # "i. Country Reports on Human Rights Practice," -> "...Practice, {AÑO}"
-        parts[1] = _replace_in_first_t(parts[1], "Practice,", f"Practice, {_xml_escape(anio_cc)}")
-        # "ii. OSAC Crime and Safety Reports," -> "...Reports, {AÑO}"
-        parts[2] = _replace_in_first_t(parts[2], "Reports,", f"Reports, {_xml_escape(anio_osac)}")
+        if 1 in incluidos_preview:
+            if not anio_cc:
+                raise ValueError("country_conditions requiere 'anio_cc'")
+            # "i. Country Reports on Human Rights Practice," -> "...Practice, {AÑO}"
+            parts[1] = _replace_in_first_t(parts[1], "Practice,", f"Practice, {_xml_escape(anio_cc)}")
+        if 2 in incluidos_preview:
+            if not anio_osac:
+                raise ValueError("country_conditions requiere 'anio_osac'")
+            # "ii. OSAC Crime and Safety Reports," -> "...Reports, {AÑO}"
+            parts[2] = _replace_in_first_t(parts[2], "Reports,", f"Reports, {_xml_escape(anio_osac)}")
     elif categoria == "fee" and tipo_fee:
         # sin subtítulo "FEE" (se quitó) — lo que cambia es el ítem del recibo:
         # "Respondent's Fee Receipt..." -> "Respondent's Initial Fee Receipt..."

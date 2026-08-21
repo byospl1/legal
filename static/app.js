@@ -456,6 +456,10 @@ async function addTabRow() {
         <label>Año del OSAC Crime and Safety Report</label>
         <input type="text" class="tab-anio-osac" placeholder="ej. 2025">
       </div>
+      <div class="muted" style="grid-column: 1 / -1; font-size:12px;">
+        Si solo subes evidencia de uno de los dos (Country Reports u OSAC), solo se incluye ese en el
+        documento y solo hace falta su año — el otro campo queda opcional.
+      </div>
     </div>
     <div class="tipo-fee-field field" style="display:none; margin-top:6px; margin-left:24px; max-width:220px;">
       <label>Tipo de FEE (el ítem dirá "...Initial Fee Receipt..." o "...Annual Fee Receipt...")</label>
@@ -934,9 +938,24 @@ async function generarDocumento() {
       resultado.innerHTML = `<div class="status err">Falta el país de origen del cliente para el Tab ${tg.letra}.</div>`;
       return;
     }
-    if (tg.categorias.includes("country_conditions") && (!tg.anio_cc || !tg.anio_osac)) {
-      resultado.innerHTML = `<div class="status err">Falta el año del Country Reports y/o del OSAC para el Tab ${tg.letra}.</div>`;
-      return;
+    if (tg.categorias.includes("country_conditions")) {
+      // Si ya se subió evidencia para alguno de los dos ítems (Country
+      // Reports / OSAC), solo se incluye en el documento el que tiene
+      // archivo — así que solo ese necesita año. Sin evidencia subida
+      // (modo manual) se incluyen los dos, y se piden los dos años como
+      // antes.
+      const evCC = tg.evidencias && tg.evidencias.country_reports;
+      const evOsac = tg.evidencias && tg.evidencias.osac;
+      const hayEvidenciaCC = Boolean(evCC || evOsac);
+      const necesitaCc = !hayEvidenciaCC || Boolean(evCC);
+      const necesitaOsac = !hayEvidenciaCC || Boolean(evOsac);
+      const faltaCc = necesitaCc && !tg.anio_cc;
+      const faltaOsac = necesitaOsac && !tg.anio_osac;
+      if (faltaCc || faltaOsac) {
+        const partes = [faltaCc && "Country Reports", faltaOsac && "OSAC"].filter(Boolean).join(" y ");
+        resultado.innerHTML = `<div class="status err">Falta el año del ${partes} para el Tab ${tg.letra}.</div>`;
+        return;
+      }
     }
   }
 
