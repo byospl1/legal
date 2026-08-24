@@ -320,6 +320,42 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   frontend puede bloquear con un error que el backend ya no exigiría (o
   viceversa, dejar pasar algo que el backend igual rechaza).
 
+## Campo "Próxima audiencia": autoformato de fecha MM/DD/AAAA → texto (2026-08-24)
+
+- **Regla del usuario (2026-08-24)**: el campo de Paso 1 (Caso) "Próxima
+  audiencia" es texto libre (siempre lo fue — se inserta literal en el
+  documento, sin parseo de fecha real en el backend). El usuario pidió poder
+  escribir la fecha/hora en formato numérico `MM/DD/AAAA HH:MM AM/PM` y que
+  el sistema la convierta sola al formato en palabras que usa el documento,
+  sin dejar de aceptar también el formato ya escrito en palabras (pegado tal
+  cual del portal EOIR).
+- Implementado 100% en frontend, `static/app.js`:
+  `formatProximaAudiencia(raw)` usa un regex que solo matchea si el texto
+  **empieza** con `D/D/AAAA` (1-2 dígitos día/mes, 4 dígitos año), con hora
+  `H:MM AM/PM` opcional a continuación, y cualquier resto de texto después
+  (tipo de audiencia, modalidad) que se preserva tal cual, reconectado con
+  coma. Si el texto no matchea ese patrón inicial (ej. ya viene en palabras,
+  "September 10, 2026, ..."), la función lo devuelve sin tocar — así se
+  aceptan ambos formatos en el mismo campo, sin un toggle ni dos inputs.
+  Ejemplo: `"08/26/2026 08:30 AM, Master Calendar Hearing, In Person"` →
+  `"August 26, 2026 at 8:30 AM, Master Calendar Hearing, In Person"`.
+- `attachProximaAudienciaFormatter` lo ata al evento `blur` del input (no a
+  `input`) — a propósito, para no reescribir la fecha en pantalla mientras
+  el usuario todavía está tecleando los dígitos (a diferencia de
+  `attachANumberFormatter` del A#, que sí formatea en cada tecla porque ahí
+  solo se insertan guiones, no se reescribe texto).
+- El formato de salida usa `"Month D, AAAA at H:MM AM/PM"` (con la palabra
+  "at" antes de la hora) — así lo pidió el usuario explícitamente en su
+  ejemplo, aunque el resto del campo (tipo/modalidad) sigue separado por
+  comas como ya se hacía. No es el mismo formato exacto que trae el
+  placeholder viejo del campo (que no usaba "at") — si el despacho prefiere
+  quitar el "at" y usar coma en su lugar ahí también, es un cambio de una
+  sola línea en `formatProximaAudiencia`.
+- No hay validación de que el día exista de verdad para ese mes (ej. no
+  rechaza "02/30/2026") — es solo reformateo de texto, no parseo real de
+  fecha; tampoco hace falta un objeto `Date` porque el string se inserta
+  literal en el documento.
+
 ## Archivos que NO se deben modificar sin instrucción explícita
 
 - `plantillas/*/*.dotx` y `plantillas/*/*.docx` — plantillas originales del

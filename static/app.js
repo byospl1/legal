@@ -46,6 +46,37 @@ function formatANumber(raw) {
   return agrupado ? `A ${agrupado}` : "A";
 }
 
+const MESES_EN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+/** Si el texto de "Próxima audiencia" empieza con una fecha en formato
+ * MM/DD/AAAA (opcionalmente seguida de hora HH:MM AM/PM), la reescribe como
+ * "Month D, AAAA at H:MM AM/PM" — dejando intacto lo que venga después (tipo
+ * de audiencia, modalidad, etc.), separado por coma igual que antes. Si el
+ * texto no empieza con ese patrón (ej. el usuario ya escribió la fecha en
+ * palabras, como la pega del portal EOIR), lo deja tal cual — así se acepta
+ * cualquiera de los dos formatos. */
+function formatProximaAudiencia(raw) {
+  const m = raw.match(/^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*,?\s*(?:(\d{1,2}):(\d{2})\s*([AaPp][Mm])?)?\s*,?\s*([\s\S]*)$/);
+  if (!m) return raw;
+  const [, mesNum, diaNum, anio, hora, min, ampm, resto] = m;
+  const mesIdx = parseInt(mesNum, 10) - 1;
+  const dia = parseInt(diaNum, 10);
+  if (mesIdx < 0 || mesIdx > 11 || !dia || dia > 31) return raw;
+  let salida = `${MESES_EN[mesIdx]} ${dia}, ${anio}`;
+  if (hora) salida += ` at ${parseInt(hora, 10)}:${min}${ampm ? " " + ampm.toUpperCase() : ""}`;
+  if (resto.trim()) salida += `, ${resto.trim()}`;
+  return salida;
+}
+
+/** Ata el formateo automático de fecha/hora al perder el foco (no en cada
+ * tecla, para no reescribir la fecha en pantalla mientras el usuario todavía
+ * está escribiendo los dígitos). */
+function attachProximaAudienciaFormatter(input) {
+  input.addEventListener("blur", () => {
+    input.value = formatProximaAudiencia(input.value);
+  });
+}
+
 /** Ata el formateo automático de A# a un <input>, preservando la posición
  * del cursor cuando el usuario edita en medio del texto (no solo al final). */
 function attachANumberFormatter(input) {
@@ -1033,6 +1064,7 @@ async function generarDocumento() {
 document.addEventListener("DOMContentLoaded", () => {
   init();
   attachANumberFormatter($("#a_number"));
+  attachProximaAudienciaFormatter($("#proxima_audiencia"));
   $("#selCaso").addEventListener("change", (e) => loadCase(e.target.value));
   $("#btnNuevoCaso").addEventListener("click", clearCaseForm);
   $("#btnGuardarCaso").addEventListener("click", guardarCaso);
