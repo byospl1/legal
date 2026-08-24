@@ -7,6 +7,81 @@ step). Este archivo es la referencia que **siempre** debe leerse/tenerse en
 cuenta al iterar sobre tabs o motions — evita releer código para reconstruir
 reglas que ya están decididas, y evita repetir errores ya corregidos.
 
+## Errores ya corregidos — checklist rápido (NO repetir)
+
+Resumen de cada problema real que se presentó, su causa y el fix aplicado.
+Es el primer lugar a revisar antes de tocar código relacionado — cada ítem
+tiene su sección con el detalle completo más abajo en este mismo archivo.
+
+1. **Numeración de páginas propias de la plantilla.** Se agregó un footer/
+   PAGE field a `i589-tab-cover` → el usuario lo pidió revertir
+   explícitamente. Regla: **solo se numera evidencia/PDFs adjuntos**, nunca
+   portada/tabla de exhibits/dividers/Proof of Service. No volver a agregar
+   footer a ningún `.dotx`. → ver "Regla de numeración de páginas".
+2. **Número de página en la esquina equivocada en PDFs escaneados.** PDFs
+   con `/Rotate` ≠ 0 hacían que el número "abajo a la derecha" cayera en otra
+   esquina visual. Fix: `page.transfer_rotation_to_content()` (pypdf) antes
+   de calcular `width`/`height` en `motor/pdf_merge.py`. Si se toca ese
+   archivo, no quitar esa llamada. → ver "Regla de numeración de páginas".
+3. **XML mal formado al recortar runs en Motion to Withdraw.**
+   `_find_preceding_run` usaba `rfind("<w:r")`, que también matchea
+   `<w:rPr`/`<w:rFonts` (substring) y agarraba el tag equivocado. Fix: buscar
+   con dos patrones (`<w:r>` y `<w:r `), igual que `_find_enclosing_run`. →
+   ver "Motion to Withdraw: un Exhibit sin evidencia se elimina".
+4. **Punto final "invisible" al recortar el párrafo NOTICE.** Insertarlo en
+   el borde del `<w:r>` lo dejaba como texto suelto fuera de `<w:t>`, que
+   Word ignora. Fix: insertar el punto DENTRO del `<w:t>`, justo antes de
+   `</w:t>`. → misma sección que el ítem 3.
+5. **Firma de Lorenzo quemada/anclada en `i589-tab-cover`.** Imagen flotante
+   (`wp:anchor`, `allowOverlap="1"`) fija en la plantilla se podía sobreponer
+   al texto del Proof of Service. Se eliminó del `.dotx` (run + relationship
+   + `word/media/`) y se reemplazó por el mecanismo dinámico
+   (`firmas_imagen` + SDT), que inserta `wp:inline` y nunca flota. → ver
+   "Firma default de Lorenzo hardcodeada".
+6. **Firma duplicada/sobrepuesta en `webex-motion`.** La plantilla traía DOS
+   firmas ancladas quemadas (abogado + preparador) que quedaban dibujadas
+   ENCIMA de la firma dinámica nueva → salía la firma dos veces. Se
+   eliminaron ambas del `.docx`. **Regla general: ninguna plantilla debe
+   llevar firma quemada/anclada** — al agregar una plantilla nueva, revisar
+   que no traiga `wp:anchor` con imagen de firma antes de registrarla. → ver
+   "`webex-motion` traía DOS firmas ancladas quemadas".
+7. **Pluralización de "Respondent(s)" hardcodeada solo para una plantilla.**
+   Existía `_apply_plural_respondents` atada a `i589-tab-cover`. Se
+   generalizó a `field_map["plural_riders"]` (lista curada de frases
+   exactas). **No usar un `replace` genérico de "Respondent"** — hay
+   apariciones que nunca deben pluralizarse (placeholder del SDT del
+   caption, tabla Form of Identity). → ver "Pluralización 'Respondent(s)'
+   con riders".
+8. **Nombre de cliente largo rompía la firma en `webex-motion`.**
+   Alineación con `<w:tab/>` + espacios literales + `jc="both"` solo
+   funcionaba con nombres cortos de una línea; con "NOMBRE et al" la segunda
+   línea caía al margen izquierdo. Fix: sangría real de párrafo
+   (`w:ind w:left`) en vez de tabs/espacios. Si se retoca ese bloque de
+   firma a mano en Word, no reintroducir alineación manual con
+   espacios/tabs para campos de longitud variable. → ver "`webex-motion`: el
+   nombre del cliente en la firma se rompía".
+9. **Saltos de página reales rompieron el formato de `webex-motion` —
+   REVERTIDO.** Se intentó cambiar los rellenos de párrafos vacíos por
+   `<w:pageBreakBefore/>` reales para arreglar una línea huérfana. El
+   usuario lo revirtió ("se arruinó el formato"). **No repetir ese cambio**
+   sin pedirlo explícitamente y validar el render real en Word (no se puede
+   verificar visualmente en este sandbox, LibreOffice está roto acá). → ver
+   "`webex-motion`: saltos de página por sección".
+10. **CC/OSAC exigía los dos años aunque solo se subiera evidencia de uno.**
+    Dos validaciones independientes (`_build_category_xml` en Python y
+    `generarDocumento()` en JS) exigían ambos años sin consultar cuál
+    subitem iba a quedar incluido. Fix: ambas consultan
+    `frag_indices_incluidos`/`tg.evidencias` antes de exigir el año. **Si se
+    toca esta lógica, mantener sincronizados frontend y backend** — son dos
+    checks independientes que deben llegar a la misma conclusión. → ver "Tab
+    de Country Conditions (CC/OSAC)".
+11. **Campo "Próxima audiencia" solo aceptaba texto ya escrito en
+    palabras.** Se agregó autoformato en frontend (`blur`, no `input`) que
+    convierte `MM/DD/AAAA HH:MM AM/PM` a `Month D, AAAA at H:MM AM/PM` si el
+    texto empieza con ese patrón numérico, dejando intacto el resto
+    (tipo/modalidad) y sin tocar nada si ya viene en palabras. → ver "Campo
+    'Próxima audiencia'".
+
 ## Plantillas registradas (`plantillas/registro.json`)
 
 Fuente de verdad de qué plantillas existen. Hoy son 6 (3 de ellas variantes
