@@ -68,7 +68,7 @@
       "requiere_variable": null
     },
     "fee": {
-      "etiqueta": "FEE (fee receipt + FBI fingerprint)",
+      "etiqueta": "FEE (fee receipt + FBI fingerprint + Biometrics Compliance)",
       "requiere_variable": null
     }
   }

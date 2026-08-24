@@ -431,6 +431,88 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   fecha; tampoco hace falta un objeto `Date` porque el string se inserta
   literal en el documento.
 
+## Tab de FEE: nuevo ítem "Biometrics Compliance" (2026-08-24)
+
+- **Pedido del usuario (2026-08-24)**: agregar un tercer ítem dentro de la
+  categoría `fee` (antes solo Fee Receipt + FBI Fingerprint) — "Biometrics
+  Compliance", con subitem "i. Respondent's Fingerprint Notification
+  Biometric Processing Stamp ({FECHA})" — y un campo en la UI para capturar
+  la fecha de captura de huella por Tab.
+- Fragmentos nuevos en `plantillas/i589-tab-cover/fragments/`:
+  `subtitle_biometrics_compliance.xml` (encabezado "Biometrics Compliance."
+  en negrita/subrayado, mismo estilo que `subtitle_form_of_identity.xml`) e
+  `item_biometrics_compliance.xml` ("i. Respondent's Fingerprint
+  Notification Biometric Processing Stamp (DATE)." con el placeholder
+  literal `(DATE)` que se reemplaza por la fecha real). Ambos autoría de
+  Claude en esta sesión (no extraídos del `.dotx` original con
+  `analyze_template.py`, porque no existían en la plantilla) — mismo
+  `rFonts`/`sz`/`spacing` que los fragmentos vecinos, `paraId`/`textId`
+  inventados sin colisión con los existentes.
+- `motor/exhibit_builder.py`: `CATEGORY_FRAGMENTS["fee"]` pasó de 2 a 4
+  fragmentos (`item_fee_receipt`, `item_fbi_fingerprint`,
+  `subtitle_biometrics_compliance`, `item_biometrics_compliance` — índices
+  0-3) y `ITEMS_POR_CATEGORIA["fee"]` ganó `{"key":
+  "biometrics_compliance", "label": "Biometrics Compliance", "frag_index":
+  3}`. Con eso, TODO el mecanismo existente de subida de evidencia/paginado
+  (`app.py._resolver_paginas_evidencia`, `build_pages_cell_content`) ya
+  funcionaba solo, sin tocar nada más — es genérico sobre
+  `ITEMS_POR_CATEGORIA` desde que se construyó (ver ítems previos de este
+  changelog).
+- **Problema encontrado y corregido en el camino**: el subtítulo
+  "Biometrics Compliance" NO debe comportarse como el de
+  `country_conditions` (que es de TODA la categoría y acompaña a
+  cualquiera de sus ítems) — es un encabezado que pertenece SOLO a su
+  propio ítem. Con la regla genérica vieja de `frag_indices_incluidos`
+  ("un subtítulo siempre acompaña a cualquier ítem incluido de la
+  categoría"), subir evidencia SOLO de Fee Receipt (sin Biometrics
+  Compliance) dejaba el encabezado "Biometrics Compliance" huérfano, sin su
+  ítem debajo. Fix: nuevo dict `SUBTITULOS_ATADOS_A_ITEM = {"fee": {2: 3}}`
+  (frag_index del subtítulo → frag_index del ítem del que depende);
+  `frag_indices_incluidos` solo incluye ese subtítulo si su ítem atado
+  también quedó incluido. Categorías sin entrada en ese dict (todas las
+  demás) mantienen el comportamiento viejo sin cambios — verificado con
+  `country_conditions` (regresión).
+- **Por qué subtítulo e ítem son DOS fragmentos separados y no uno solo**:
+  se probó primero combinarlos en un único fragmento (un solo frag_index,
+  dos `<w:p>` adentro) para evitar el problema del huérfano — funciona para
+  DESCRIPTION, pero rompe la alineación línea a línea con la columna PAGES
+  (`build_pages_cell_content` genera una línea de PAGES por frag_index
+  incluido, no por párrafo de XML; con un solo frag_index de dos párrafos,
+  DESCRIPTION mostraba 2 líneas para ese ítem pero PAGES solo 1, y el
+  "Pgs. X-Y" quedaba pegado a la línea equivocada). Se revirtió a dos
+  fragmentos separados (mismo patrón que `subtitle_country_conditions` +
+  `subitem_country_reports`/`subitem_osac`) — verificado que con evidencia
+  adjunta la columna PAGES saca una línea en blanco para el subtítulo y
+  "Pgs. X-Y" alineado con la línea del ítem, igual que en Country
+  Conditions.
+- La fecha (`fecha_huella`) es **obligatoria cuando el ítem Biometrics
+  Compliance vaya a quedar incluido** — mismo patrón que `anio_cc`/
+  `anio_osac` de Country Conditions: sin evidencia adjunta en la categoría
+  `fee` (modo manual) los 3 ítems se incluyen siempre y la fecha siempre se
+  pide; con evidencia adjunta, solo se pide si justo se subió evidencia
+  para `biometrics_compliance`. Threading completo: `static/app.js`
+  (`collectExhibits` → `tg.fecha_huella`, validado en `generarDocumento()`
+  antes del submit) → `app.py` (pasa `document_instance` sin tocar) →
+  `motor/fill_engine._apply_exhibits` → `build_exhibit_table` →
+  `build_description_cell_content` → `_build_category_xml`, que lanza
+  `ValueError("fee requiere 'fecha_huella' para Biometrics Compliance")` si
+  falta (la validación del frontend debería atajarlo antes, este es el
+  respaldo del backend, igual que con `anio_cc`/`anio_osac`). **Si se toca
+  esta lógica, mantener sincronizados frontend y backend** — mismo aviso
+  que el ítem de CC/OSAC del checklist de arriba.
+- UI: `static/app.js` agrega `.fecha-huella-field` (input de texto libre,
+  ej. "09/22/2023") a la tarjeta de cada Tab, visible solo cuando la
+  categoría `fee` está marcada — mismo patrón que `.tipo-fee-field`. No
+  lleva autoformato de fecha (a diferencia de "Próxima audiencia") — es
+  texto libre que se inserta literal entre paréntesis, igual que la fecha
+  ya hardcodeada de `item_fbi_fingerprint.xml`.
+- `catalogos.json` → `exhibit_categorias.fee.etiqueta` actualizada a "FEE
+  (fee receipt + FBI fingerprint + Biometrics Compliance)" para que el
+  checkbox de categoría en la UI refleje los tres ítems.
+- No se tocó `field_map.json` — este mecanismo vive enteramente en
+  `exhibit_builder.py`/fragments (como `tipo_fee`, que tampoco es un campo
+  SDT), no en el sistema de SDT/campos simples de la plantilla.
+
 ## Archivos que NO se deben modificar sin instrucción explícita
 
 - `plantillas/*/*.dotx` y `plantillas/*/*.docx` — plantillas originales del

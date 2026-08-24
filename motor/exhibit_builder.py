@@ -13,7 +13,7 @@ original (ver plantillas/i589-tab-cover/fragments/), siguiendo las secciones
 
 Cada categoría puede traer más de un documento de evidencia (ej. Country
 Conditions = reporte de país + reporte OSAC; Fee = fee receipt + FBI
-fingerprint). Cuando hay evidencia adjunta para AL MENOS UNO de los
+fingerprint + Biometrics Compliance). Cuando hay evidencia adjunta para AL MENOS UNO de los
 documentos de una categoría, solo se incluyen en DESCRIPTION (y en la
 columna PAGES, en paralelo) los ítems que sí tienen archivo — si solo se
 sube el Fee Receipt, se omite el ítem de FBI Fingerprint, y viceversa. Sin
@@ -38,7 +38,20 @@ CATEGORY_FRAGMENTS: dict[str, list[str]] = {
     "country_conditions": ["subtitle_country_conditions", "subitem_country_reports", "subitem_osac"],
     "form_of_identity": ["subtitle_form_of_identity", "item_passport_from"],
     "supplemental_evidence": ["subtitle_supplemental_evidence", "item_declaration"],
-    "fee": ["item_fee_receipt", "item_fbi_fingerprint"],
+    "fee": ["item_fee_receipt", "item_fbi_fingerprint", "subtitle_biometrics_compliance", "item_biometrics_compliance"],
+}
+
+# Subtítulos que solo deben incluirse junto con UN ítem específico de la
+# misma categoría (a diferencia del comportamiento genérico de
+# frag_indices_incluidos, donde un subtítulo acompaña a CUALQUIER ítem
+# incluido de la categoría — correcto para country_conditions, donde el
+# subtítulo es de toda la categoría). "Biometrics Compliance" solo
+# encabeza su propio ítem ("i. Respondent's Fingerprint Notification...");
+# si en un Tab de FEE solo se sube evidencia de Fee Receipt/FBI Fingerprint
+# (sin Biometrics Compliance), el encabezado no debe quedar huérfano sin su
+# ítem debajo. {frag_index del subtítulo: frag_index del ítem del que depende}
+SUBTITULOS_ATADOS_A_ITEM: dict[str, dict[int, int]] = {
+    "fee": {2: 3},
 }
 
 # Textos fijos por tipo de documento de Supplemental Evidence. "News" lleva
@@ -72,6 +85,7 @@ ITEMS_POR_CATEGORIA: dict[str, list[dict]] = {
     "fee": [
         {"key": "fee_receipt", "label": "Fee Receipt", "frag_index": 0},
         {"key": "fbi_fingerprint", "label": "FBI Fingerprint", "frag_index": 1},
+        {"key": "biometrics_compliance", "label": "Biometrics Compliance", "frag_index": 3},
     ],
 }
 
@@ -118,14 +132,19 @@ def pluralizar_respondent(xml: str) -> str:
 def frag_indices_incluidos(categoria: str, evidencias: dict | None) -> set[int]:
     """Índices (dentro de CATEGORY_FRAGMENTS[categoria]) que deben incluirse
     en DESCRIPTION y PAGES. Los subtítulos (índices que no son de ningún
-    ítem) siempre se incluyen. Entre los ítems: si NINGUNO de los de esta
-    categoría tiene evidencia adjunta, se incluyen todos (modo manual). Si
-    AL MENOS UNO la tiene, solo se incluyen los que sí tienen archivo. No
-    aplica a form_of_identity (ver _build_form_of_identity_*)."""
+    ítem) siempre se incluyen junto con cualquier ítem incluido de la
+    categoría — salvo que estén atados a un ítem puntual vía
+    SUBTITULOS_ATADOS_A_ITEM (ej. "Biometrics Compliance" solo acompaña a
+    su propio ítem, no a Fee Receipt/FBI Fingerprint). Entre los ítems: si
+    NINGUNO de los de esta categoría tiene evidencia adjunta, se incluyen
+    todos (modo manual). Si AL MENOS UNO la tiene, solo se incluyen los que
+    sí tienen archivo. No aplica a form_of_identity (ver
+    _build_form_of_identity_*)."""
     frag_names = CATEGORY_FRAGMENTS[categoria]
     items = ITEMS_POR_CATEGORIA.get(categoria, [])
     item_frag_indices = {item["frag_index"] for item in items}
     subtitle_indices = set(range(len(frag_names))) - item_frag_indices
+    atados = SUBTITULOS_ATADOS_A_ITEM.get(categoria, {})
 
     if not evidencias:
         return set(range(len(frag_names)))
@@ -134,7 +153,12 @@ def frag_indices_incluidos(categoria: str, evidencias: dict | None) -> set[int]:
     if not incluidos_items:
         return set(range(len(frag_names)))
 
-    return subtitle_indices | incluidos_items
+    incluidos_subtitulos = {
+        idx
+        for idx in subtitle_indices
+        if idx not in atados or atados[idx] in incluidos_items
+    }
+    return incluidos_subtitulos | incluidos_items
 
 
 def _identity_line_text(pais: str, persona_nombre: str | None, tipo_doc: str | None) -> str:
@@ -223,6 +247,7 @@ def _build_category_xml(
     plural: bool = False,
     evidencias: dict | None = None,
     tipo_fee: str | None = None,
+    fecha_huella: str | None = None,
     identidades: list[dict] | None = None,
     documentos_se: list[dict] | None = None,
 ) -> str:
@@ -259,10 +284,20 @@ def _build_category_xml(
                 raise ValueError("country_conditions requiere 'anio_osac'")
             # "ii. OSAC Crime and Safety Reports," -> "...Reports, {AÑO}"
             parts[2] = _replace_in_first_t(parts[2], "Reports,", f"Reports, {_xml_escape(anio_osac)}")
-    elif categoria == "fee" and tipo_fee:
+    elif categoria == "fee":
         # sin subtítulo "FEE" (se quitó) — lo que cambia es el ítem del recibo:
         # "Respondent's Fee Receipt..." -> "Respondent's Initial Fee Receipt..."
-        parts[0] = _replace_in_first_t(parts[0], "Fee Receipt", f"{_xml_escape(tipo_fee)} Fee Receipt")
+        if tipo_fee:
+            parts[0] = _replace_in_first_t(parts[0], "Fee Receipt", f"{_xml_escape(tipo_fee)} Fee Receipt")
+        # El subtítulo "Biometrics Compliance" (frag_index 2) va atado a su
+        # ítem (frag_index 3, "i. Respondent's Fingerprint Notification...")
+        # vía SUBTITULOS_ATADOS_A_ITEM — si el ítem va a quedar incluido, la
+        # fecha de captura de huella es obligatoria (mismo patrón que
+        # anio_cc/anio_osac de country_conditions).
+        if 3 in frag_indices_incluidos(categoria, evidencias):
+            if not fecha_huella:
+                raise ValueError("fee requiere 'fecha_huella' para Biometrics Compliance")
+            parts[3] = _replace_in_first_t(parts[3], "(DATE)", f"({_xml_escape(fecha_huella)})")
 
     incluidos = frag_indices_incluidos(categoria, evidencias)
     return "".join(p for i, p in enumerate(parts) if i in incluidos)
@@ -276,13 +311,16 @@ def build_description_cell_content(
     plural: bool = False,
     evidencias: dict | None = None,
     tipo_fee: str | None = None,
+    fecha_huella: str | None = None,
     identidades: list[dict] | None = None,
     documentos_se: list[dict] | None = None,
 ) -> str:
     spacer = _load("spacer")
     ordered = [c for c in CATEGORY_ORDER if c in categorias]
     blocks = [
-        _build_category_xml(c, pais, anio_cc, anio_osac, plural, evidencias, tipo_fee, identidades, documentos_se)
+        _build_category_xml(
+            c, pais, anio_cc, anio_osac, plural, evidencias, tipo_fee, fecha_huella, identidades, documentos_se
+        )
         for c in ordered
     ]
     return spacer.join(blocks)
@@ -373,6 +411,7 @@ def build_exhibit_table(tab_groups: list[dict], plural: bool = False) -> str:
             plural,
             tg.get("evidencias"),
             tg.get("tipo_fee"),
+            tg.get("fecha_huella"),
             tg.get("identidades"),
             tg.get("documentos_se"),
         )

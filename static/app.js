@@ -500,6 +500,10 @@ async function addTabRow() {
         <option value="Annual">Annual</option>
       </select>
     </div>
+    <div class="fecha-huella-field field" style="display:none; margin-top:6px; margin-left:24px; max-width:220px;">
+      <label>Biometrics Compliance — fecha de captura de huella</label>
+      <input type="text" class="tab-fecha-huella" placeholder="ej. 09/22/2023">
+    </div>
     <div class="identidades-tab" style="margin-top:10px;"></div>
     <div class="documentos-tab" style="margin-top:10px;"></div>
     <div class="documentos-se-tab" style="margin-top:10px;"></div>
@@ -516,10 +520,12 @@ async function addTabRow() {
   const paisField = div.querySelector(".pais-field");
   const anioFields = div.querySelector(".anio-fields");
   const tipoFeeField = div.querySelector(".tipo-fee-field");
+  const fechaHuellaField = div.querySelector(".fecha-huella-field");
   const actualizarCampos = () => {
     paisField.style.display = formOfIdentityCheck.checked || countryConditionsCheck.checked ? "block" : "none";
     anioFields.style.display = countryConditionsCheck.checked ? "grid" : "none";
     tipoFeeField.style.display = feeCheck.checked ? "block" : "none";
+    fechaHuellaField.style.display = feeCheck.checked ? "block" : "none";
     renderIdentidadesUploads(div);
     renderDocumentUploads(div);
     renderDocumentosSE(div);
@@ -919,6 +925,7 @@ function collectExhibits() {
     const anio_cc = necesitaAnios ? card.querySelector(".tab-anio-cc").value.trim() : null;
     const anio_osac = necesitaAnios ? card.querySelector(".tab-anio-osac").value.trim() : null;
     const tipo_fee = categorias.includes("fee") ? card.querySelector(".tab-tipo-fee").value.trim() || null : null;
+    const fecha_huella = categorias.includes("fee") ? card.querySelector(".tab-fecha-huella").value.trim() || null : null;
     const evidencias = {};
     for (const [key, info] of Object.entries(card._evidencias || {})) {
       evidencias[key] = info.evidencia_id;
@@ -941,7 +948,7 @@ function collectExhibits() {
           evidencia_id: doc.evidencia_id,
         }))
       : [];
-    return { letra, paginas, titulo, categorias, pais, anio_cc, anio_osac, tipo_fee, evidencias, identidades, documentos_se };
+    return { letra, paginas, titulo, categorias, pais, anio_cc, anio_osac, tipo_fee, fecha_huella, evidencias, identidades, documentos_se };
   });
 }
 
@@ -985,6 +992,19 @@ async function generarDocumento() {
       if (faltaCc || faltaOsac) {
         const partes = [faltaCc && "Country Reports", faltaOsac && "OSAC"].filter(Boolean).join(" y ");
         resultado.innerHTML = `<div class="status err">Falta el año del ${partes} para el Tab ${tg.letra}.</div>`;
+        return;
+      }
+    }
+    if (tg.categorias.includes("fee")) {
+      // Igual que CC/OSAC: "Biometrics Compliance" solo exige su fecha si
+      // va a quedar incluido en el documento — sin evidencia subida para
+      // ningún ítem de FEE se incluyen los tres ítems (modo manual), y con
+      // evidencia solo si se subió justo la de Biometrics Compliance.
+      const evFee = tg.evidencias || {};
+      const hayEvidenciaFee = Object.keys(evFee).length > 0;
+      const necesitaFechaHuella = !hayEvidenciaFee || Boolean(evFee.biometrics_compliance);
+      if (necesitaFechaHuella && !tg.fecha_huella) {
+        resultado.innerHTML = `<div class="status err">Falta la fecha de captura de huella (Biometrics Compliance) para el Tab ${tg.letra}.</div>`;
         return;
       }
     }
