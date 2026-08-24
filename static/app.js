@@ -500,16 +500,14 @@ async function addTabRow() {
         <option value="Annual">Annual</option>
       </select>
     </div>
-    <div class="fecha-huella-field field" style="display:none; margin-top:6px; margin-left:24px; max-width:220px;">
-      <label>Biometrics Compliance — fecha de captura de huella</label>
-      <input type="text" class="tab-fecha-huella" placeholder="ej. 09/22/2023">
-    </div>
     <div class="identidades-tab" style="margin-top:10px;"></div>
+    <div class="biometricos-tab" style="margin-top:10px;"></div>
     <div class="documentos-tab" style="margin-top:10px;"></div>
     <div class="documentos-se-tab" style="margin-top:10px;"></div>
   `;
   $("#tabsList").appendChild(div);
   div._identidadesEvidencia = {};
+  div._biometricosEvidencia = {};
   div._documentosSE = []; // [{ id, tipo, titulo, evidencia_id, num_paginas }]
   div._documentosSECounter = 0;
 
@@ -520,13 +518,12 @@ async function addTabRow() {
   const paisField = div.querySelector(".pais-field");
   const anioFields = div.querySelector(".anio-fields");
   const tipoFeeField = div.querySelector(".tipo-fee-field");
-  const fechaHuellaField = div.querySelector(".fecha-huella-field");
   const actualizarCampos = () => {
     paisField.style.display = formOfIdentityCheck.checked || countryConditionsCheck.checked ? "block" : "none";
     anioFields.style.display = countryConditionsCheck.checked ? "grid" : "none";
     tipoFeeField.style.display = feeCheck.checked ? "block" : "none";
-    fechaHuellaField.style.display = feeCheck.checked ? "block" : "none";
     renderIdentidadesUploads(div);
+    renderBiometricosUploads(div);
     renderDocumentUploads(div);
     renderDocumentosSE(div);
   };
@@ -535,6 +532,7 @@ async function addTabRow() {
   }
 
   renderIdentidadesUploads(div);
+  renderBiometricosUploads(div);
   renderDocumentUploads(div);
   renderDocumentosSE(div);
   recalcularPaginas();
@@ -618,6 +616,88 @@ async function onIdentidadUpload(card, input) {
     statusEl.textContent = "Error: " + e.message;
     input.value = "";
     delete card._identidadesEvidencia[key];
+  }
+}
+
+/** Reconstruye las filas "fecha de captura de huella + archivo" de
+ * Biometrics Compliance, una por persona del caso (líder + cada rider) —
+ * mismo patrón que renderIdentidadesUploads (Form of Identity), sin perder
+ * los archivos ya subidos para personas que sigan en la lista. */
+function renderBiometricosUploads(card) {
+  const cont = card.querySelector(".biometricos-tab");
+  const categorias = categoriasMarcadas(card);
+  card._biometricosEvidencia = card._biometricosEvidencia || {};
+  card._biometricosFecha = card._biometricosFecha || {};
+
+  if (!categorias.includes("fee")) {
+    cont.innerHTML = "";
+    return;
+  }
+
+  const personas = personasDelCaso();
+  const keysActivos = new Set(personas.map((p) => p.key));
+  for (const key of Object.keys(card._biometricosEvidencia)) {
+    if (!keysActivos.has(key)) delete card._biometricosEvidencia[key];
+  }
+  for (const key of Object.keys(card._biometricosFecha)) {
+    if (!keysActivos.has(key)) delete card._biometricosFecha[key];
+  }
+
+  cont.innerHTML =
+    `<label style="font-size:13px; font-weight:600; color:var(--text-dim);">Biometrics Compliance — fecha de captura de huella por persona (uno por cada aplicante del caso)</label>` +
+    personas
+      .map(
+        (p) => `
+      <div class="grid" style="margin-top:6px;">
+        <div class="field">
+          <label style="font-weight:400;">${escapeHtml(p.label)} — fecha de captura de huella</label>
+          <input type="text" class="biometrico-fecha" data-persona-key="${p.key}" placeholder="ej. 09/22/2023" value="${escapeHtml(card._biometricosFecha[p.key] || "")}">
+        </div>
+        <div class="field">
+          <label style="font-weight:400;">Archivo (PDF, opcional)</label>
+          <input type="file" class="biometrico-upload-input" data-persona-key="${p.key}" accept="application/pdf">
+          <span class="muted biometrico-upload-status" data-persona-key="${p.key}"></span>
+        </div>
+      </div>`
+      )
+      .join("");
+
+  for (const input of cont.querySelectorAll(".biometrico-fecha")) {
+    input.addEventListener("input", () => {
+      card._biometricosFecha[input.dataset.personaKey] = input.value;
+    });
+  }
+  for (const input of cont.querySelectorAll(".biometrico-upload-input")) {
+    input.addEventListener("change", () => onBiometricoUpload(card, input));
+  }
+}
+
+async function onBiometricoUpload(card, input) {
+  const key = input.dataset.personaKey;
+  const statusEl = card.querySelector(`.biometrico-upload-status[data-persona-key="${key}"]`);
+  const file = input.files[0];
+  card._biometricosEvidencia = card._biometricosEvidencia || {};
+  if (!file) {
+    delete card._biometricosEvidencia[key];
+    statusEl.textContent = "";
+    recalcularPaginas();
+    return;
+  }
+  statusEl.textContent = "Subiendo…";
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("tipo", "biometrics_compliance");
+    const res = await fetch("/api/evidencia", { method: "POST", body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Error al subir el archivo");
+    card._biometricosEvidencia[key] = { evidencia_id: data.evidencia_id, num_paginas: data.num_paginas };
+    statusEl.textContent = `${data.num_paginas} página(s).`;
+    recalcularPaginas();
+  } catch (e) {
+    statusEl.textContent = "Error: " + e.message;
+    input.value = "";
+    delete card._biometricosEvidencia[key];
   }
 }
 
@@ -891,6 +971,18 @@ function recalcularPaginas() {
         pagina += info.num_paginas;
         if (statusEl) statusEl.textContent = `${info.num_paginas} página(s) — empieza en la página ${inicioDoc}.`;
       }
+      if (cat === "fee") {
+        for (const persona of personasDelCaso()) {
+          const info = (card._biometricosEvidencia || {})[persona.key];
+          const statusEl = card.querySelector(`.biometrico-upload-status[data-persona-key="${persona.key}"]`);
+          if (!info) continue;
+          huboDocumento = true;
+          if (inicioTab === null) inicioTab = pagina;
+          const inicioDoc = pagina;
+          pagina += info.num_paginas;
+          if (statusEl) statusEl.textContent = `${info.num_paginas} página(s) — empieza en la página ${inicioDoc}.`;
+        }
+      }
     }
 
     if (huboDocumento) {
@@ -925,7 +1017,17 @@ function collectExhibits() {
     const anio_cc = necesitaAnios ? card.querySelector(".tab-anio-cc").value.trim() : null;
     const anio_osac = necesitaAnios ? card.querySelector(".tab-anio-osac").value.trim() : null;
     const tipo_fee = categorias.includes("fee") ? card.querySelector(".tab-tipo-fee").value.trim() || null : null;
-    const fecha_huella = categorias.includes("fee") ? card.querySelector(".tab-fecha-huella").value.trim() || null : null;
+    const biometricos = categorias.includes("fee")
+      ? personasDelCaso().map((p) => {
+          const fechaInput = card.querySelector(`.biometrico-fecha[data-persona-key="${p.key}"]`);
+          const info = (card._biometricosEvidencia || {})[p.key];
+          return {
+            persona_nombre: p.nombre,
+            fecha: fechaInput ? fechaInput.value.trim() : "",
+            evidencia_id: info ? info.evidencia_id : null,
+          };
+        })
+      : [];
     const evidencias = {};
     for (const [key, info] of Object.entries(card._evidencias || {})) {
       evidencias[key] = info.evidencia_id;
@@ -948,7 +1050,7 @@ function collectExhibits() {
           evidencia_id: doc.evidencia_id,
         }))
       : [];
-    return { letra, paginas, titulo, categorias, pais, anio_cc, anio_osac, tipo_fee, fecha_huella, evidencias, identidades, documentos_se };
+    return { letra, paginas, titulo, categorias, pais, anio_cc, anio_osac, tipo_fee, biometricos, evidencias, identidades, documentos_se };
   });
 }
 
@@ -996,15 +1098,13 @@ async function generarDocumento() {
       }
     }
     if (tg.categorias.includes("fee")) {
-      // Igual que CC/OSAC: "Biometrics Compliance" solo exige su fecha si
-      // va a quedar incluido en el documento — sin evidencia subida para
-      // ningún ítem de FEE se incluyen los tres ítems (modo manual), y con
-      // evidencia solo si se subió justo la de Biometrics Compliance.
-      const evFee = tg.evidencias || {};
-      const hayEvidenciaFee = Object.keys(evFee).length > 0;
-      const necesitaFechaHuella = !hayEvidenciaFee || Boolean(evFee.biometrics_compliance);
-      if (necesitaFechaHuella && !tg.fecha_huella) {
-        resultado.innerHTML = `<div class="status err">Falta la fecha de captura de huella (Biometrics Compliance) para el Tab ${tg.letra}.</div>`;
+      // Biometrics Compliance ahora es un renglón por persona del caso
+      // (líder + cada rider), igual que Form of Identity — cada uno
+      // necesita su propia fecha de captura de huella.
+      const faltantes = (tg.biometricos || []).filter((b) => !b.fecha);
+      if (faltantes.length > 0) {
+        const nombres = faltantes.map((b) => b.persona_nombre || "Respondent").join(", ");
+        resultado.innerHTML = `<div class="status err">Falta la fecha de captura de huella (Biometrics Compliance) para ${nombres} en el Tab ${tg.letra}.</div>`;
         return;
       }
     }
@@ -1022,7 +1122,8 @@ async function generarDocumento() {
     (tg) =>
       (tg.evidencias && Object.keys(tg.evidencias).length > 0) ||
       (tg.identidades || []).some((i) => i.evidencia_id) ||
-      (tg.documentos_se || []).some((d) => d.evidencia_id)
+      (tg.documentos_se || []).some((d) => d.evidencia_id) ||
+      (tg.biometricos || []).some((b) => b.evidencia_id)
   );
   const separar_por_tab = hayEvidencia ? true : $("#separarPorTab").checked;
   const generar_pdf = hayEvidencia ? true : $("#generarPdf").checked;

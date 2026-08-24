@@ -513,6 +513,89 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   `exhibit_builder.py`/fragments (como `tipo_fee`, que tampoco es un campo
   SDT), no en el sistema de SDT/campos simples de la plantilla.
 
+## Biometrics Compliance pasó a ser 1 documento POR PERSONA (líder + riders) (2026-08-24)
+
+- **Pedido del usuario (mismo día que se creó el ítem)**: en vez de un solo
+  campo `fecha_huella` por Tab, dejar subir **más de un documento, uno por
+  rider**, y que el nombre del rider aparezca en el propio renglón — "ya
+  tienes una referencia de cómo se ponen los riders", en referencia al
+  mecanismo que ya existía para Form of Identity (un documento por persona
+  del caso, ver `identidades`/`personasDelCaso()`).
+- **Se reemplazó el campo único `fecha_huella` por una lista `biometricos`**
+  (uno por persona: líder + cada rider del caso), clonando exactamente el
+  patrón de Form of Identity en vez de inventar uno nuevo:
+  - `motor/exhibit_builder.py`: "Biometrics Compliance" dejó de vivir en
+    `CATEGORY_FRAGMENTS["fee"]`/`ITEMS_POR_CATEGORIA["fee"]` (que ahora solo
+    tienen `item_fee_receipt`/`item_fbi_fingerprint`, índices 0-1) — pasó a
+    ser una sección dinámica igual que `_build_form_of_identity_description`/
+    `_build_form_of_identity_pages`: nuevas funciones
+    `_build_biometrics_compliance_description(biometricos)` y
+    `_build_biometrics_compliance_pages(biometricos)`, que `_build_category_xml`
+    y `build_pages_cell_content` **agregan siempre al final** de la categoría
+    "fee" cuando está marcada (no depende de `frag_indices_incluidos`, no
+    hay forma de omitirla — mismo comportamiento que Form of Identity, que
+    tampoco es "opcional" una vez marcada la categoría). Por esto se pudo
+    **borrar `SUBTITULOS_ATADOS_A_ITEM["fee"]`** (el mecanismo del huérfano
+    de la sección anterior de este archivo) — ya no aplica porque el
+    subtítulo y sus ítems viven juntos en su propia función, nunca
+    desalineados.
+  - Cada entrada de `biometricos` es `{persona_nombre, fecha, evidencia}`
+    (mismo shape que `identidades`, cambiando `tipo_doc` por `fecha`). Texto
+    por persona (`_biometrics_line_text`): sin `persona_nombre` →
+    "Respondent's Fingerprint Notification Biometric Processing Stamp
+    (FECHA)."; con `persona_nombre` → "Rider's {NOMBRE} Fingerprint
+    Notification Biometric Processing Stamp (FECHA)." — **se quitó el "i. "**
+    que tenía el ítem original (`item_biometrics_compliance.xml`): con un
+    renglón por persona ya no tiene sentido un numeral romano fijo de un
+    solo ítem; queda sin numerar, igual que los renglones de Form of
+    Identity.
+  - `fecha` es obligatoria por persona (`_build_biometrics_compliance_description`
+    tira `ValueError` si falta) — es el mismo requisito que antes tenía el
+    `fecha_huella` único, generalizado a cada entrada.
+  - `app.py._resolver_paginas_evidencia`: mismo tratamiento que
+    `identidades`/`documentos_se` — nuevo bloque `if categoria == "fee":`
+    que resuelve `evidencia_id` → `evidencia` (pagina_inicio/num_paginas/path)
+    por cada entrada de `biometricos`, en el mismo lugar del loop de
+    categorías donde ya se resuelven `fee_receipt`/`fbi_fingerprint` (por
+    eso el orden de páginas queda: fee_receipt, fbi_fingerprint, luego
+    biometrics del líder, luego de cada rider — coincide con el orden en que
+    `_build_biometrics_compliance_description` los agrega al final). También
+    se sumó `biometricos_resueltos` a la lista `docs_con_pagina` que arma el
+    merge del PDF de evidencia (mismo bloque que ya sumaba
+    `identidades_resueltos`/`documentos_se_resueltos`).
+  - `static/app.js`: se quitó el único campo `.fecha-huella-field`/
+    `.tab-fecha-huella`. Nuevo `renderBiometricosUploads(card)` — clon
+    literal de `renderIdentidadesUploads`, un renglón por
+    `personasDelCaso()` con input de fecha (texto libre) + upload de PDF
+    opcional; estado en `card._biometricosEvidencia` (archivos, mismo patrón
+    que `_identidadesEvidencia`) y `card._biometricosFecha` (fechas
+    tipeadas, para no perderlas cuando `actualizarCampos()` vuelve a
+    regenerar el HTML del bloque al tocar otra categoría — Form of Identity
+    no necesita este dict paralelo porque su `<select>` de tipo de
+    documento no pierde nada crítico al resetear a su default, pero perder
+    una fecha tipeada a mano sí sería molesto). `recalcularPaginas()` y
+    `collectExhibits()` tienen el mismo tratamiento por-persona que ya
+    tenían para `identidades`. La validación previa al submit en
+    `generarDocumento()` ahora exige fecha en cada entrada de
+    `tg.biometricos` (reemplaza el chequeo viejo de `evFee.biometrics_compliance`,
+    que ya no existe como key de `evidencias` — Biometrics Compliance no
+    vive más en el diccionario `evidencias` genérico de items fijos).
+- **Por qué no se mantuvo el chequeo "si solo subís Fee Receipt se omite
+  Biometrics Compliance completo" de la sección anterior**: con evidencia
+  por persona ya no aplica esa lógica de todo-o-nada por categoría — cada
+  persona tiene su propio renglón, obligatorio, igual que ya pasaba con
+  Form of Identity (que tampoco se puede "omitir" una vez marcada la
+  categoría). Si en el futuro se pide poder omitir Biometrics Compliance
+  para un caso sin riders, es un cambio deliberado aparte, no algo que
+  quedó pendiente de este cambio.
+- Verificado con pruebas manuales (no hay test suite automatizada en este
+  proyecto): alineación PAGES/DESCRIPTION 4/4 con evidencia parcial (fee_receipt
+  con archivo, fbi_fingerprint sin archivo, biometrics de 2 personas, una con
+  archivo y otra sin), y pipeline completo `_resolver_paginas_evidencia` →
+  `build_exhibit_table` con líder + 1 rider, ambos con archivo — páginas
+  encadenadas correctamente (1-2 fee_receipt, 3 biometrics líder, 4
+  biometrics rider).
+
 ## Archivos que NO se deben modificar sin instrucción explícita
 
 - `plantillas/*/*.dotx` y `plantillas/*/*.docx` — plantillas originales del

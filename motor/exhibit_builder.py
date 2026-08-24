@@ -13,7 +13,7 @@ original (ver plantillas/i589-tab-cover/fragments/), siguiendo las secciones
 
 Cada categoría puede traer más de un documento de evidencia (ej. Country
 Conditions = reporte de país + reporte OSAC; Fee = fee receipt + FBI
-fingerprint + Biometrics Compliance). Cuando hay evidencia adjunta para AL MENOS UNO de los
+fingerprint). Cuando hay evidencia adjunta para AL MENOS UNO de los
 documentos de una categoría, solo se incluyen en DESCRIPTION (y en la
 columna PAGES, en paralelo) los ítems que sí tienen archivo — si solo se
 sube el Fee Receipt, se omite el ítem de FBI Fingerprint, y viceversa. Sin
@@ -23,7 +23,10 @@ todos (modo manual, como antes).
 Form of Identity es distinto: no tiene un número fijo de documentos, sino
 uno POR PERSONA en el caso (el aplicante líder + cada rider), cada uno con
 su propio tipo de documento (Passport / Birth Certificate / ID) — ver
-build_description_cell_content(identidades=...).
+build_description_cell_content(identidades=...). Biometrics Compliance
+(dentro de la categoría "fee") sigue el mismo patrón por persona — ver
+build_description_cell_content(biometricos=...) y
+_build_biometrics_compliance_description.
 """
 
 from __future__ import annotations
@@ -38,21 +41,19 @@ CATEGORY_FRAGMENTS: dict[str, list[str]] = {
     "country_conditions": ["subtitle_country_conditions", "subitem_country_reports", "subitem_osac"],
     "form_of_identity": ["subtitle_form_of_identity", "item_passport_from"],
     "supplemental_evidence": ["subtitle_supplemental_evidence", "item_declaration"],
-    "fee": ["item_fee_receipt", "item_fbi_fingerprint", "subtitle_biometrics_compliance", "item_biometrics_compliance"],
+    "fee": ["item_fee_receipt", "item_fbi_fingerprint"],
 }
 
 # Subtítulos que solo deben incluirse junto con UN ítem específico de la
 # misma categoría (a diferencia del comportamiento genérico de
 # frag_indices_incluidos, donde un subtítulo acompaña a CUALQUIER ítem
 # incluido de la categoría — correcto para country_conditions, donde el
-# subtítulo es de toda la categoría). "Biometrics Compliance" solo
-# encabeza su propio ítem ("i. Respondent's Fingerprint Notification...");
-# si en un Tab de FEE solo se sube evidencia de Fee Receipt/FBI Fingerprint
-# (sin Biometrics Compliance), el encabezado no debe quedar huérfano sin su
-# ítem debajo. {frag_index del subtítulo: frag_index del ítem del que depende}
-SUBTITULOS_ATADOS_A_ITEM: dict[str, dict[int, int]] = {
-    "fee": {2: 3},
-}
+# subtítulo es de toda la categoría). Ninguna categoría lo necesita hoy
+# ("Biometrics Compliance" se volvió una sección dinámica por persona, ver
+# _build_biometrics_compliance_description — ya no vive en CATEGORY_FRAGMENTS
+# ni usa este mecanismo). Se deja el dict vacío por si otra categoría futura
+# lo necesita.
+SUBTITULOS_ATADOS_A_ITEM: dict[str, dict[int, int]] = {}
 
 # Textos fijos por tipo de documento de Supplemental Evidence. "News" lleva
 # título variable (el de la noticia); los demás son fijos.
@@ -85,7 +86,6 @@ ITEMS_POR_CATEGORIA: dict[str, list[dict]] = {
     "fee": [
         {"key": "fee_receipt", "label": "Fee Receipt", "frag_index": 0},
         {"key": "fbi_fingerprint", "label": "FBI Fingerprint", "frag_index": 1},
-        {"key": "biometrics_compliance", "label": "Biometrics Compliance", "frag_index": 3},
     ],
 }
 
@@ -198,6 +198,51 @@ def _identidades_por_defecto() -> list[dict]:
     return [{"persona_nombre": None, "tipo_doc": "Passport"}]
 
 
+def _biometrics_line_text(persona_nombre: str | None, fecha: str) -> str:
+    if persona_nombre:
+        return f"Rider’s {persona_nombre} Fingerprint Notification Biometric Processing Stamp ({fecha})."
+    return f"Respondent’s Fingerprint Notification Biometric Processing Stamp ({fecha})."
+
+
+def _build_biometrics_compliance_description(biometricos: list[dict]) -> str:
+    """Igual que Form of Identity: un renglón POR PERSONA del caso (líder +
+    cada rider), bajo el subtítulo fijo "Biometrics Compliance." — a
+    diferencia de fee_receipt/fbi_fingerprint (ítems fijos de la categoría),
+    esta sección es siempre dinámica y siempre se incluye completa cuando la
+    categoría "fee" está marcada (no depende de si hay evidencia adjunta,
+    igual que Form of Identity)."""
+    subtitle = _load("subtitle_biometrics_compliance")
+    item_tpl = _load("item_biometrics_compliance")
+    lineas = [subtitle]
+    for bio in biometricos:
+        fecha = bio.get("fecha")
+        if not fecha:
+            raise ValueError("fee requiere 'fecha' para cada persona en Biometrics Compliance")
+        texto = _biometrics_line_text(bio.get("persona_nombre"), fecha)
+        lineas.append(_set_first_t_text(item_tpl, texto))
+    return "".join(lineas)
+
+
+def _build_biometrics_compliance_pages(biometricos: list[dict]) -> str:
+    pages_value_tpl = _load("pages_value")
+    blank = _set_first_t_text(pages_value_tpl, "")
+    lineas = [blank]
+    for bio in biometricos:
+        info = bio.get("evidencia")
+        if info and info.get("pagina_inicio") and info.get("num_paginas"):
+            inicio = info["pagina_inicio"]
+            fin = inicio + info["num_paginas"] - 1
+            texto = f"Pgs. {inicio}" if inicio == fin else f"Pgs. {inicio}-{fin}"
+            lineas.append(_set_first_t_text(pages_value_tpl, texto))
+        else:
+            lineas.append(blank)
+    return "".join(lineas)
+
+
+def _biometricos_por_defecto() -> list[dict]:
+    return [{"persona_nombre": None, "fecha": None}]
+
+
 def _supplemental_evidence_line_text(tipo: str | None, titulo: str | None) -> str:
     if tipo == "News":
         titulo = titulo or "…"
@@ -247,7 +292,7 @@ def _build_category_xml(
     plural: bool = False,
     evidencias: dict | None = None,
     tipo_fee: str | None = None,
-    fecha_huella: str | None = None,
+    biometricos: list[dict] | None = None,
     identidades: list[dict] | None = None,
     documentos_se: list[dict] | None = None,
 ) -> str:
@@ -289,18 +334,16 @@ def _build_category_xml(
         # "Respondent's Fee Receipt..." -> "Respondent's Initial Fee Receipt..."
         if tipo_fee:
             parts[0] = _replace_in_first_t(parts[0], "Fee Receipt", f"{_xml_escape(tipo_fee)} Fee Receipt")
-        # El subtítulo "Biometrics Compliance" (frag_index 2) va atado a su
-        # ítem (frag_index 3, "i. Respondent's Fingerprint Notification...")
-        # vía SUBTITULOS_ATADOS_A_ITEM — si el ítem va a quedar incluido, la
-        # fecha de captura de huella es obligatoria (mismo patrón que
-        # anio_cc/anio_osac de country_conditions).
-        if 3 in frag_indices_incluidos(categoria, evidencias):
-            if not fecha_huella:
-                raise ValueError("fee requiere 'fecha_huella' para Biometrics Compliance")
-            parts[3] = _replace_in_first_t(parts[3], "(DATE)", f"({_xml_escape(fecha_huella)})")
 
     incluidos = frag_indices_incluidos(categoria, evidencias)
-    return "".join(p for i, p in enumerate(parts) if i in incluidos)
+    resultado = "".join(p for i, p in enumerate(parts) if i in incluidos)
+    if categoria == "fee":
+        # Biometrics Compliance ya no es un ítem fijo de CATEGORY_FRAGMENTS —
+        # es una sección dinámica con un renglón por persona del caso (líder +
+        # cada rider), igual que Form of Identity. Se agrega siempre al final
+        # de la categoría "fee" cuando está marcada.
+        resultado += _build_biometrics_compliance_description(biometricos or _biometricos_por_defecto())
+    return resultado
 
 
 def build_description_cell_content(
@@ -311,7 +354,7 @@ def build_description_cell_content(
     plural: bool = False,
     evidencias: dict | None = None,
     tipo_fee: str | None = None,
-    fecha_huella: str | None = None,
+    biometricos: list[dict] | None = None,
     identidades: list[dict] | None = None,
     documentos_se: list[dict] | None = None,
 ) -> str:
@@ -319,7 +362,7 @@ def build_description_cell_content(
     ordered = [c for c in CATEGORY_ORDER if c in categorias]
     blocks = [
         _build_category_xml(
-            c, pais, anio_cc, anio_osac, plural, evidencias, tipo_fee, fecha_huella, identidades, documentos_se
+            c, pais, anio_cc, anio_osac, plural, evidencias, tipo_fee, biometricos, identidades, documentos_se
         )
         for c in ordered
     ]
@@ -332,6 +375,7 @@ def build_pages_cell_content(
     paginas_fallback: str,
     identidades: list[dict] | None = None,
     documentos_se: list[dict] | None = None,
+    biometricos: list[dict] | None = None,
 ) -> str:
     """Columna PAGES. Con evidencia adjunta (o identidades con documento
     propio), una línea por cada párrafo INCLUIDO de DESCRIPTION (en blanco
@@ -344,8 +388,9 @@ def build_pages_cell_content(
     pages_value_tpl = _load("pages_value")
     hay_identidades_con_datos = identidades and any(i.get("evidencia") for i in identidades)
     hay_documentos_se_con_datos = documentos_se and any(d.get("evidencia") for d in documentos_se)
+    hay_biometricos_con_datos = biometricos and any(b.get("evidencia") for b in biometricos)
 
-    if not evidencias and not hay_identidades_con_datos and not hay_documentos_se_con_datos:
+    if not evidencias and not hay_identidades_con_datos and not hay_documentos_se_con_datos and not hay_biometricos_con_datos:
         return _set_first_t_text(pages_value_tpl, f"Pgs. {paginas_fallback}")
 
     blank = _set_first_t_text(pages_value_tpl, "")
@@ -374,7 +419,10 @@ def build_pages_cell_content(
                 paras.append(_set_first_t_text(pages_value_tpl, texto))
             else:
                 paras.append(blank)
-        blocks.append("".join(paras))
+        bloque = "".join(paras)
+        if cat == "fee":
+            bloque += _build_biometrics_compliance_pages(biometricos or _biometricos_por_defecto())
+        blocks.append(bloque)
     return blank.join(blocks)
 
 
@@ -411,12 +459,17 @@ def build_exhibit_table(tab_groups: list[dict], plural: bool = False) -> str:
             plural,
             tg.get("evidencias"),
             tg.get("tipo_fee"),
-            tg.get("fecha_huella"),
+            tg.get("biometricos"),
             tg.get("identidades"),
             tg.get("documentos_se"),
         )
         pages_xml = build_pages_cell_content(
-            tg["categorias"], tg.get("evidencias"), tg["paginas"], tg.get("identidades"), tg.get("documentos_se")
+            tg["categorias"],
+            tg.get("evidencias"),
+            tg["paginas"],
+            tg.get("identidades"),
+            tg.get("documentos_se"),
+            tg.get("biometricos"),
         )
         row = (
             "<w:tr>"

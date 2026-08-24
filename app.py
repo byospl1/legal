@@ -258,16 +258,20 @@ def _resolver_paginas_evidencia(pagina_inicial_lote: int, exhibits: list[dict]) 
     catálogo fijo (ver motor.exhibit_builder.ITEMS_POR_CATEGORIA), y cada
     identidad de tg['identidades'] con su propia 'evidencia' resuelta
     (Form of Identity tiene un documento por persona, no un catálogo fijo).
+    Igual para cada entrada de tg['biometricos'] (Biometrics Compliance
+    también es un documento por persona, dentro de la categoría "fee").
     Devuelve la próxima página disponible después de este lote."""
     pagina = pagina_inicial_lote
     for tg in exhibits:
         evidencias_ids = tg.get("evidencias") or {}
         identidades = tg.get("identidades") or []
         documentos_se = tg.get("documentos_se") or []
+        biometricos = tg.get("biometricos") or []
         tiene_algo = (
             bool(evidencias_ids)
             or any(i.get("evidencia_id") for i in identidades)
             or any(d.get("evidencia_id") for d in documentos_se)
+            or any(b.get("evidencia_id") for b in biometricos)
         )
         if not tiene_algo:
             continue
@@ -333,9 +337,29 @@ def _resolver_paginas_evidencia(pagina_inicial_lote: int, exhibits: list[dict]) 
                     inicio_tab = inicio
                 resueltas[item["key"]] = {"pagina_inicio": inicio, "num_paginas": n, "path": info["path"]}
                 pagina += n
+            if categoria == "fee":
+                for bio in biometricos:
+                    evidencia_id = bio.get("evidencia_id")
+                    bio["evidencia"] = None
+                    if not evidencia_id:
+                        continue
+                    info = _EVIDENCIAS.get(evidencia_id)
+                    if not info:
+                        raise FillEngineError(
+                            f"No se encontró el documento de Biometrics Compliance subido en el Tab "
+                            f"{tg.get('letra', '?')} — si reiniciaste el servidor después de subirlo, "
+                            "vuelve a subirlo e intenta de nuevo."
+                        )
+                    n = info["num_paginas"]
+                    inicio = pagina
+                    if inicio_tab is None:
+                        inicio_tab = inicio
+                    bio["evidencia"] = {"pagina_inicio": inicio, "num_paginas": n, "path": info["path"]}
+                    pagina += n
         tg["evidencias"] = resueltas
         tg["identidades"] = identidades
         tg["documentos_se"] = documentos_se
+        tg["biometricos"] = biometricos
         if inicio_tab is not None:
             fin_tab = pagina - 1
             tg["paginas"] = str(inicio_tab) if inicio_tab == fin_tab else f"{inicio_tab}-{fin_tab}"
@@ -467,12 +491,16 @@ def api_generar():
         evidencias_resueltas = (tab_group or {}).get("evidencias") or {}
         identidades_resueltas = (tab_group or {}).get("identidades") or []
         documentos_se_resueltos = (tab_group or {}).get("documentos_se") or []
+        biometricos_resueltos = (tab_group or {}).get("biometricos") or []
         docs_con_pagina = [(info["pagina_inicio"], info["path"]) for info in evidencias_resueltas.values()]
         docs_con_pagina += [
             (i["evidencia"]["pagina_inicio"], i["evidencia"]["path"]) for i in identidades_resueltas if i.get("evidencia")
         ]
         docs_con_pagina += [
             (d["evidencia"]["pagina_inicio"], d["evidencia"]["path"]) for d in documentos_se_resueltos if d.get("evidencia")
+        ]
+        docs_con_pagina += [
+            (b["evidencia"]["pagina_inicio"], b["evidencia"]["path"]) for b in biometricos_resueltos if b.get("evidencia")
         ]
         if docs_con_pagina and result.pdf_path:
             docs_con_pagina.sort(key=lambda x: x[0])
