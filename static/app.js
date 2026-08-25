@@ -1127,13 +1127,21 @@ async function generarDocumento() {
     }
   }
 
+  const camposExtraValues = collectCamposExtra();
+  for (const c of (plantilla && plantilla.campos_extra) || []) {
+    if (!camposExtraValues[c.nombre]) {
+      resultado.innerHTML = `<div class="status err">Falta el campo "${c.etiqueta}".</div>`;
+      return;
+    }
+  }
+
   const document_instance = {
     template_id: templateId,
     titulo: (exhibits[0] && exhibits[0].titulo) || $("#titulo").value,
     exhibits,
     exhibits_evidencia: collectMotionExhibitsEvidencia(),
     pagina_inicial_exhibits: parseInt($("#motionExhibitsPaginaInicial").value, 10) || 1,
-    ...collectCamposExtra(),
+    ...camposExtraValues,
   };
   const hayEvidencia = exhibits.some(
     (tg) =>

@@ -15,6 +15,65 @@
       "tiene_tabla_exhibits": false
     },
     {
+      "template_id": "written-pleadings",
+      "nombre": "Respondent's Written Pleadings",
+      "archivo": "written-pleadings/WRITTEN_PLEADINGS.docx",
+      "field_map": "written-pleadings/field_map.json",
+      "tiene_tabla_exhibits": false,
+      "campos_extra": [
+        {
+          "nombre": "fecha_nta",
+          "etiqueta": "Fecha de notificación del Notice to Appear",
+          "placeholder": "ej. March 04, 2024"
+        },
+        {
+          "nombre": "alegaciones_admitidas",
+          "etiqueta": "Alegaciones admitidas",
+          "placeholder": "ej. 1 through 4"
+        },
+        {
+          "nombre": "cargo_removibilidad",
+          "etiqueta": "Cargo(s) de removibilidad admitidos (cita INA/CFR)",
+          "placeholder": "ej. 212(a)(6)(A)(i)"
+        },
+        {
+          "nombre": "designacion_pais_remocion",
+          "etiqueta": "Designación de país de remoción (cláusula completa)",
+          "placeholder": "ej. respectfully declines to designate a country of removal"
+        },
+        {
+          "nombre": "formas_alivio",
+          "etiqueta": "Forma(s) de alivio a solicitar",
+          "placeholder": "ej. I-589 Asylum, Withholding of Removal, and CAT"
+        },
+        {
+          "nombre": "horas_estimadas",
+          "etiqueta": "Horas estimadas para la audiencia",
+          "placeholder": "ej. 2"
+        },
+        {
+          "nombre": "idioma_interprete",
+          "etiqueta": "Idioma del intérprete",
+          "placeholder": "ej. Spanish"
+        },
+        {
+          "nombre": "dialecto_interprete",
+          "etiqueta": "Dialecto del intérprete",
+          "placeholder": "ej. ___________ (dejar en blanco si no aplica)"
+        },
+        {
+          "nombre": "traductor",
+          "etiqueta": "Traductor (Certificate of Translation)",
+          "placeholder": "ej. Bruno Briz"
+        },
+        {
+          "nombre": "documento_traducido",
+          "etiqueta": "Nombre del documento traducido",
+          "placeholder": "ej. DECLARATION OF PLEADINGS"
+        }
+      ]
+    },
+    {
       "template_id": "eoir-33-change-address",
       "nombre": "EOIR-33 — Change of Address/Contact Information Form",
       "archivo": "eoir-33-change-address/EOIR_33.pdf",

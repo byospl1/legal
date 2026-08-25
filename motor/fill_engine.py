@@ -190,18 +190,29 @@ def _apply_field_values(document_xml: str, field_map: dict, values: dict[str, st
     return "".join(out)
 
 
-def _firma_lookup_nombre(categoria: str, case: dict) -> str | None:
+def _firma_lookup_nombre(categoria: str, nombre_field: str | None, values: dict) -> str | None:
     """Nombre de archivo (sin extensión) bajo el que debe estar guardada la
-    firma de esta persona en firmas/{categoria}/ — ver _apply_firmas_imagen."""
+    firma de esta persona en firmas/{categoria}/ — ver _apply_firmas_imagen.
+
+    `nombre_field`, si viene en la entrada de firmas_imagen, indica de qué
+    clave de `values` (el dict ya resuelto de caso + instancia de
+    documento) sacar el nombre — permite firmas de personas que no son
+    "abogado"/"preparador" del caso (ej. "traductor" en written-pleadings,
+    que es un campo por corrida, no del caso). Sin `nombre_field` se usa el
+    comportamiento de siempre por categoría (compatibilidad con las
+    plantillas existentes)."""
+    if nombre_field:
+        valor = values.get(nombre_field)
+        return valor.split(",")[0].strip() if valor else None
     if categoria == "abogados":
-        abogado = case.get("abogado")
+        abogado = values.get("abogado")
         return abogado.split(",")[0].strip() if abogado else None
     if categoria == "preparadores":
-        return case.get("preparador") or None
+        return values.get("preparador") or None
     return None
 
 
-def _apply_firmas_imagen(document_xml: str, tmp_path: Path, field_map: dict, case: dict) -> str:
+def _apply_firmas_imagen(document_xml: str, tmp_path: Path, field_map: dict, values: dict) -> str:
     """Para cada entrada de field_map["firmas_imagen"], si existe un PNG en
     firmas/{categoria}/{nombre}.png para la persona resuelta, sustituye la
     línea de firma (subrayado en blanco) por la imagen escaneada. Si no hay
@@ -218,7 +229,7 @@ def _apply_firmas_imagen(document_xml: str, tmp_path: Path, field_map: dict, cas
     doc_pr_id = 900100000
 
     for entry in entries:
-        nombre = _firma_lookup_nombre(entry["categoria"], case)
+        nombre = _firma_lookup_nombre(entry["categoria"], entry.get("nombre_field"), values)
         if not nombre:
             continue
         image_path = FIRMAS_DIR / entry["categoria"] / f"{_sanitize_filename_part(nombre)}.png"
@@ -618,6 +629,18 @@ def _juez_apellido_mayus(juez: str | None) -> str | None:
     return apellido.upper() or None
 
 
+def _persona_abreviada(nombre: str | None) -> str | None:
+    """Forma abreviada "Primer nombre + inicial del apellido" (ej. "Bruno
+    Briz" -> "Bruno B.") — se usa en la línea de firma "/S/" del
+    Certificate of Translation de written-pleadings."""
+    if not nombre:
+        return None
+    palabras = nombre.split()
+    if len(palabras) < 2:
+        return nombre
+    return f"{palabras[0]} {palabras[-1][0]}."
+
+
 def _resolve_values(case: dict, document_instance: dict) -> dict[str, str]:
     from motor.case_store import a_number_para_documento, nombre_para_documento
 
@@ -645,6 +668,19 @@ def _resolve_values(case: dict, document_instance: dict) -> dict[str, str]:
         "direccion_anterior": document_instance.get("direccion_anterior"),
         "direccion_actual": document_instance.get("direccion_actual"),
         "fecha_cancelacion": document_instance.get("fecha_cancelacion"),
+        # written-pleadings: propios de esta corrida, no del caso (ver
+        # plantillas/written-pleadings/field_map.json).
+        "fecha_nta": document_instance.get("fecha_nta"),
+        "alegaciones_admitidas": document_instance.get("alegaciones_admitidas"),
+        "cargo_removibilidad": document_instance.get("cargo_removibilidad"),
+        "designacion_pais_remocion": document_instance.get("designacion_pais_remocion"),
+        "formas_alivio": document_instance.get("formas_alivio"),
+        "horas_estimadas": document_instance.get("horas_estimadas"),
+        "idioma_interprete": document_instance.get("idioma_interprete"),
+        "dialecto_interprete": document_instance.get("dialecto_interprete"),
+        "traductor": document_instance.get("traductor"),
+        "traductor_abreviado": _persona_abreviada(document_instance.get("traductor")),
+        "documento_traducido": document_instance.get("documento_traducido"),
     }
     return {k: v for k, v in values.items() if v is not None}
 
@@ -703,7 +739,7 @@ def generar_documento(
         if field_map.get("tiene_tabla_exhibits") and document_instance.get("exhibits"):
             document_xml = _apply_exhibits(document_xml, document_instance["exhibits"], plural=tiene_riders)
 
-        document_xml = _apply_firmas_imagen(document_xml, tmp_path, field_map, case)
+        document_xml = _apply_firmas_imagen(document_xml, tmp_path, field_map, values)
 
         # Pluraliza los textos fijos "Respondent(...)" cuando hay riders,
         # según la lista curada field_map["plural_riders"] de cada plantilla

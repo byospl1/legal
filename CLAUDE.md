@@ -119,6 +119,30 @@ tiene su sección con el detalle completo más abajo en este mismo archivo.
     traceback.** Fix: `request.get_json(force=True, silent=True)` +
     chequeo `isinstance(..., dict)` → 400 "El cuerpo de la petición no es
     JSON válido". → ver "Auditoría 2026-08-25".
+17. **`campos_extra` de ninguna plantilla se validaban como obligatorios
+    antes de generar.** Dejar uno vacío no tiraba error — se quedaba con
+    el placeholder que haya quedado grabado en el `.docx` al construir la
+    plantilla (texto real de OTRO caso). Se detectó al construir
+    `written-pleadings` (10 `campos_extra` nuevos, alto riesgo de mezclar
+    datos entre clientes). Fix genérico en `static/app.js`
+    (`generarDocumento`): valida que todo `campos_extra` de la plantilla
+    activa tenga valor antes de armar `document_instance` — protege
+    también a `motion-withdraw-*`, que ya tenía este mismo hueco. No
+    volver a quitar esa validación. → ver "Plantilla `written-pleadings`".
+18. **Firma quemada/anclada #4 encontrada: no era del cliente, era del
+    traductor.** `written-pleadings` traía, en un cuadro de texto flotante
+    ("Certificate of Translation") que `python-docx`'s `.paragraphs` NO
+    recorre, la firma escaneada real de Bruno Briz (preparador/traductor),
+    quemada dos veces (rama moderna + rama legacy VML del mismo cuadro).
+    Un primer diagnóstico por posición aproximada del offset la atribuyó
+    al cliente — el atributo correcto se confirmó ubicando el párrafo
+    exacto que contiene cada `r:embed`. Eliminada igual que las otras 3
+    (i589-tab-cover, webex-motion x2). **Si se analiza una plantilla
+    nueva a partir de un `.docx` YA LLENADO, revisar también
+    `<w:txbxContent>` (cuadros de texto) además de `document.paragraphs`
+    — un cuadro de texto flotante puede esconder tanto texto con datos
+    reales como una firma quemada que `.paragraphs` nunca muestra.** → ver
+    "Plantilla `written-pleadings`".
 
 **Nota**: los fixes 13-16 (más limpieza de evidencia huérfana en
 `output/_evidencia` al arrancar y código muerto) están detallados con más
@@ -130,7 +154,7 @@ tres puntos de nuevo.
 
 ## Plantillas registradas (`plantillas/registro.json`)
 
-Fuente de verdad de qué plantillas existen. Hoy son 6 (3 de ellas variantes
+Fuente de verdad de qué plantillas existen. Hoy son 7 (3 de ellas variantes
 del grupo `motion-withdraw`):
 
 | template_id | tipo | tiene_tabla_exhibits |
@@ -141,6 +165,7 @@ del grupo `motion-withdraw`):
 | `motion-withdraw-no-cooperation` | MOTION (variante de `motion-withdraw`) | no |
 | `motion-withdraw-cancelation` | MOTION (variante de `motion-withdraw`) | no |
 | `motion-withdraw-location-known` | MOTION (variante de `motion-withdraw`) — **BORRADOR**, ver abajo | no |
+| `written-pleadings` | Respondent's Written Pleadings (+ Declaration + Certificate of Translation) | no |
 
 Para agregar una plantilla nueva, seguir el procedimiento del `README.md`
 ("Agregar una plantilla `.dotx` nueva"): `analyze_template.py` → revisar
@@ -769,6 +794,125 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   caer en la línea correcta, avisar con el detalle exacto (qué texto/fecha
   tenía esa persona, en qué línea cayó vs. en cuál debía cuál) para ajustar
   con precisión en vez de adivinar.
+
+## Plantilla `written-pleadings` — creada desde un documento YA LLENADO, sin SDT de fábrica (2026-08-25)
+
+- **Punto de partida distinto a todas las demás plantillas**: el usuario
+  subió `Template_Written_Pleadings.docx`, que NO era una plantilla en
+  blanco sino un documento real ya generado para un caso (Insuasti Ruiz,
+  A# 245-870-935) — **cero** `<w:sdt>`, bookmarks o campos MERGEFIELD.
+  Instrucción del usuario: "lo que está subrayado [en Word] son los datos
+  que debes pedir". Hubo que verificar el subrayado corriendo por
+  `r.underline` en cada run (no fiarse de una lectura visual del texto
+  denso con marcadores — en un primer barrido se leyó mal un run y se
+  reportó "no subrayado" cuando sí lo estaba, ver más abajo).
+- **Campos ESTÁNDAR del caso reutilizados tal cual** (no subrayados en el
+  ejemplo, porque ya existen en el Paso 1 y se repiten en todas las
+  plantillas): `abogado`, `abogado_firma_coma`, `cliente_nombre` (8
+  apariciones), `a_number` (2), `corte_sede`, `juez`, `proxima_audiencia`,
+  `preparador`, `preparador_mayus`.
+- **8 campos nuevos en el cuerpo principal** (subrayados, capturados como
+  `campos_extra` de esta plantilla — no se guardan en el caso, se piden en
+  cada corrida): `fecha_nta`, `alegaciones_admitidas`,
+  `cargo_removibilidad`, `designacion_pais_remocion`, `formas_alivio`,
+  `horas_estimadas`, `idioma_interprete`, `dialecto_interprete`.
+  **Corrección durante el análisis**: en el primer reporte al usuario se
+  dijo que el blanco del dialecto NO estaba subrayado — era un error de
+  lectura (`r.underline` daba `True`); se corrigió antes de tocar el
+  `.docx` y sí quedó como campo. Los blancos que de verdad NO estaban
+  subrayados (denies allegation(s), denies charge(s), segunda forma de
+  alivio "(2) ____") se dejaron fijos, confirmado explícitamente por el
+  usuario en un `AskUserQuestion` ("solo lo subrayado").
+- **Dos falsos positivos de subrayado descartados** (son estilo tipográfico
+  de encabezado de sección, no campos): "PROOF OF SERVICE" y "DECLARACIÓN
+  DE ALEGATOS DEL DEMANDADO". Confirmado cruzando con
+  `motion-withdraw-no-cooperation`, que también subraya "PROOF OF SERVICE"
+  sin que sea un campo — es la convención tipográfica del despacho para
+  esos títulos, no una instrucción de llenado.
+- **Hallazgo importante que casi se pasa por alto**: el documento trae un
+  **cuadro de texto flotante** ("CERTIFICATE OF TRANSLATION") que
+  `python-docx`'s `Document.paragraphs` **no recorre** (vive dentro de
+  `<w:txbxContent>`, anidado en un `<w:drawing><wp:anchor>`) — un primer
+  barrido con `d.paragraphs` no lo vio en absoluto. Solo apareció al
+  inspeccionar `document.xml` crudo. Si se vuelve a analizar una plantilla
+  nueva a partir de un `.docx` de ejemplo, **no asumir que `d.paragraphs`
+  cubre todo el documento** — revisar también `<w:txbxContent>` con
+  regex/XML crudo.
+  - Ese cuadro de texto trae, quemada, la firma escaneada real (JPEG,
+    `rId7`) — **del TRADUCTOR (Bruno Briz), no del cliente** como se creyó
+    en un primer momento por la posición aproximada del offset en el XML.
+    Se verificó con precisión buscando cada aparición de `rId7` y mirando
+    el párrafo que la contiene: las dos (una en la rama moderna
+    `mc:Choice`/drawingML, otra en la legacy `mc:Fallback`/VML del mismo
+    cuadro) caen en la línea de firma "/S/Bruno B. . Bruno Briz
+    {fecha}". Se eliminó por completo (imagen + relationship +
+    `word/media/image1.jpeg`), siguiendo la regla ya establecida
+    "ninguna plantilla lleva firma quemada/anclada".
+  - 3 campos nuevos ahí: `traductor` (persona, 2 apariciones dentro de la
+    rama Choice), `documento_traducido` (nombre del documento traducido,
+    ej. "DECLARATION OF PLEADINGS"), y `traductor_abreviado` — este
+    último es **derivado**, no se pide en la UI: `fill_engine.
+    _persona_abreviada("Bruno Briz")` → `"Bruno B."` (primer nombre +
+    inicial del apellido), mismo patrón que `_abogado_firma`/
+    `_abogado_nombre`.
+  - **Solo se le hizo cirugía de SDT a la rama moderna (`mc:Choice`)** del
+    cuadro de texto. La rama legacy VML (`mc:Fallback`, que Word casi
+    nunca renderiza en software actual) se dejó con el texto literal del
+    caso de ejemplo (Bruno Briz / DECLARATION OF PLEADINGS) sin convertir
+    a campo — no es información sensible de cliente (es el nombre de un
+    preparador interno, ya público en `catalogos.json`), pero si el
+    despacho quiere consistencia total ahí también, es trabajo pendiente
+    documentado en `field_map.json["_notas"]`.
+- **Cambio genérico en `motor/fill_engine.py`** para poder poner una firma
+  dinámica de una persona que NO es `abogado`/`preparador` del caso: la
+  firma de "traductor" es un campo **por corrida** (`document_instance`),
+  no del caso. `_firma_lookup_nombre`/`_apply_firmas_imagen` ahora reciben
+  `values` (el dict ya resuelto de caso + instancia) en vez de solo
+  `case`, y cada entrada de `field_map["firmas_imagen"]` puede traer un
+  `"nombre_field"` opcional indicando de qué clave de `values` sacar el
+  nombre — sin `nombre_field` el comportamiento es idéntico al de siempre
+  (compatibilidad total con las 4 plantillas existentes que ya usaban
+  `firmas_imagen`). `written-pleadings` usa `"nombre_field": "traductor"`,
+  `"categoria": "preparadores"` (reutiliza `firmas/preparadores/`, ya que
+  Bruno Briz está en `catalogos.json` como preparador).
+- **Validación genérica nueva en `static/app.js` (`generarDocumento`)**:
+  antes de armar `document_instance`, ahora se valida que **todo**
+  `campos_extra` de la plantilla activa tenga un valor no vacío (bloquea
+  con "Falta el campo {etiqueta}" si no). Antes esto no existía para
+  ningún `campos_extra` de ninguna plantilla (ej. `direccion_conocida` de
+  Motion to Withdraw tampoco se validaba) — se generalizó al agregar
+  `written-pleadings` porque acá el riesgo es más serio: sin esta
+  validación, dejar un campo nuevo vacío no tira error, simplemente deja
+  el placeholder que quedó grabado en el `.docx` al construir la
+  plantilla (texto real del caso Insuasti Ruiz/Bruno Briz) — un documento
+  de OTRO cliente podría salir con alegaciones/cargos/fecha de NTA que no
+  son las suyas. Con la validación nueva esto ya no puede pasar desde la
+  UI. **Si se toca esta lógica, no volver a quitar la validación
+  genérica** — protege a `written-pleadings` y de paso a
+  `motion-withdraw-*`.
+- Cirugía técnica (por si se repite este proceso con otra plantilla sin
+  SDT de fábrica): `unpack` → `motor.ooxml_utils.merge_runs_in_document_xml`
+  (limpia atributos `rsid` y fusiona runs adyacentes de formato idéntico,
+  simplifica mucho encontrar los límites de cada campo) → localizar cada
+  campo por su texto exacto (con `occurrence` para desambiguar
+  repeticiones, ej. `cliente_nombre` aparece 8 veces) → envolver en
+  `<w:sdt><w:sdtPr><w:id w:val="…"/>{rPr copiado del run original}
+  </w:sdtPr><w:sdtContent>{run(s) original(es)}</w:sdtContent></w:sdt>` →
+  `rezip`. Las líneas de firma que traen tabs+espacios+guiones bajos TODO
+  en un mismo `<w:r>` (común después de `merge_runs`) hay que partirlas a
+  mano: el prefijo (tabs que posicionan la línea) queda FUERA del SDT, el
+  mecanismo `_apply_firmas_imagen` reemplaza el contenido completo del
+  SDT y perdería el posicionamiento si el prefijo quedara adentro. IDs
+  usados: rango `920000001`-`920000032` (32 campos en total, ver
+  `field_map.json["_notas"]` para la lista completa).
+- Verificado con `motor.fill_engine.generar_documento` real (caso y
+  campos de prueba, no el caso real Insuasti Ruiz): `validation_ok=True`,
+  y se contó cada valor de prueba en el XML resultante — las 8
+  apariciones de `cliente_nombre`, las 2 de `a_number`, las 2 de
+  `traductor`, la forma derivada `traductor_abreviado` correcta, y CERO
+  apariciones de `rId7` (la firma quemada del traductor ya no está en
+  ningún documento generado). También corrida la suite `tests/run_tests.py`
+  completa (10/10) para confirmar que no se rompió nada de lo existente.
 
 ## Archivos que NO se deben modificar sin instrucción explícita
 
