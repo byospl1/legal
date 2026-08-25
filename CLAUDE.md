@@ -679,7 +679,12 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   Form of Identity (que tampoco se puede "omitir" una vez marcada la
   categoría). Si en el futuro se pide poder omitir Biometrics Compliance
   para un caso sin riders, es un cambio deliberado aparte, no algo que
-  quedó pendiente de este cambio.
+  quedó pendiente de este cambio. **Actualización 2026-08-26: ese cambio
+  se pidió y se hizo** — ver "Ajuste (2026-08-26): Biometrics Compliance
+  ya no exige fecha a quien no adjunta archivo" más abajo. Cada persona
+  sigue siendo obligatoria SOLO en modo manual (nada subido en ningún
+  lado de "fee"); con evidencia en algún lado de la categoría, una
+  persona sin su propio archivo se omite sin exigirle nada.
 - Verificado con pruebas manuales (no hay test suite automatizada en este
   proyecto): alineación PAGES/DESCRIPTION 4/4 con evidencia parcial (fee_receipt
   con archivo, fbi_fingerprint sin archivo, biometrics de 2 personas, una con
@@ -815,6 +820,63 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   caer en la línea correcta, avisar con el detalle exacto (qué texto/fecha
   tenía esa persona, en qué línea cayó vs. en cuál debía cuál) para ajustar
   con precisión en vez de adivinar.
+
+### Ajuste (2026-08-26): Biometrics Compliance ya no exige fecha a quien no adjunta archivo
+
+- **Reporte del usuario**: en un Tab con Fee Receipt cargado pero SIN
+  archivo de Biometrics Compliance para Respondent, el formulario
+  bloqueaba con "Falta la fecha de captura de huella (Biometrics
+  Compliance) para Respondent en el Tab A" — exigía la fecha aunque el
+  usuario no estuviera subiendo evidencia de ese ítem para esa persona.
+  Esto era justo el caso que la sección "Biometrics Compliance pasó a ser
+  1 documento POR PERSONA" (más arriba) había dejado anotado como "cambio
+  deliberado aparte, no algo que quedó pendiente" — el usuario ahora lo
+  pidió explícitamente.
+- **Regla nueva, mismo criterio "modo evidencia" que ya usan Country
+  Conditions/CC-OSAC y fee_receipt/fbi_fingerprint**: si la categoría
+  "fee" tiene evidencia adjunta EN ALGUNA PARTE (fee_receipt,
+  fbi_fingerprint, o Biometrics Compliance de otra persona), una persona
+  SIN su propio archivo de Biometrics Compliance se omite por completo
+  del documento (ni renglón, ni fecha obligatoria). Sin NINGÚN archivo
+  subido en toda la categoría (modo manual puro), se sigue exigiendo la
+  fecha de todas las personas y se incluyen todas, como antes — este caso
+  no cambió.
+- Dos lugares tocados, mismo patrón de sincronización frontend/backend que
+  ya se repite en este proyecto (CC/OSAC, Biometrics original):
+  - `motor/exhibit_builder.py`: `_build_biometrics_compliance_description`
+    y `_build_biometrics_compliance_pages` ganaron un parámetro
+    `modo_evidencia: bool = False` — si es `True`, se salta (sin exigir
+    fecha) a cualquier persona sin `evidencia`/`evidencia_id`. Nuevo
+    helper `_fee_tiene_evidencia_en_items_fijos(evidencias)` (mira si
+    `fee_receipt`/`fbi_fingerprint` están en el dict `evidencias`). Los
+    dos llamadores (`_build_category_xml` para DESCRIPTION,
+    `build_pages_cell_content` para PAGES) calculan `modo_evidencia_fee =
+    _fee_tiene_evidencia_en_items_fijos(evidencias) or
+    hay_evidencia_dinamica` — **hay que setearlo en AMBOS lugares**, no
+    alcanza con uno solo (mismo aviso que la vez pasada con
+    `hay_evidencia_dinamica`: si solo se arregla uno de los dos,
+    DESCRIPTION y PAGES quedan con distinta cantidad de personas
+    incluidas y se desalinean).
+  - `static/app.js` → `generarDocumento()`: la validación previa al
+    submit ahora calcula el mismo `modoEvidenciaFee` (mirando
+    `tg.evidencias.fee_receipt`/`.fbi_fingerprint` y si algún
+    `tg.biometricos` ya trae `evidencia_id`) y solo exige `fecha` a la
+    persona que tenga su propio `evidencia_id` cuando `modoEvidenciaFee`
+    es `true`; sin evidencia en ningún lado de la categoría, sigue
+    exigiendo la fecha de todos.
+- Si en el futuro se toca esta lógica, mantener sincronizados frontend y
+  backend — son dos validaciones independientes que deben llegar a la
+  misma conclusión sobre qué personas quedan incluidas/obligadas, mismo
+  aviso que ya aplica a CC/OSAC y al fix original de Biometrics.
+- Verificado con pruebas manuales (no hay test suite automatizada para
+  este caso puntual en `tests/run_tests.py`, aunque la suite completa
+  sigue en 10/10): reproducido el escenario exacto del reporte
+  (fee_receipt con archivo, biometrics de Respondent sin archivo ni
+  fecha) — ya no lanza error, Biometrics Compliance se omite del
+  documento, Fee Receipt sigue apareciendo. Confirmado además que sigue
+  exigiendo la fecha cuando la persona SÍ tiene su propio archivo
+  adjunto, y que en modo completamente manual (nada subido en ningún
+  lado) se sigue exigiendo la fecha de todas las personas, sin cambios.
 
 ## Plantilla `written-pleadings` — creada desde un documento YA LLENADO, sin SDT de fábrica (2026-08-25)
 

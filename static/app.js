@@ -1115,10 +1115,22 @@ async function generarDocumento() {
       }
     }
     if (tg.categorias.includes("fee")) {
-      // Biometrics Compliance ahora es un renglón por persona del caso
-      // (líder + cada rider), igual que Form of Identity — cada uno
-      // necesita su propia fecha de captura de huella.
-      const faltantes = (tg.biometricos || []).filter((b) => !b.fecha);
+      // Biometrics Compliance es un renglón por persona del caso (líder +
+      // cada rider). Si la categoría "fee" ya tiene evidencia adjunta en
+      // ALGUNA parte (fee_receipt, fbi_fingerprint, o biometrics de otra
+      // persona), solo se exige la fecha a quien SÍ está cargando su
+      // propio archivo — a alguien sin archivo no se le obliga a llenar
+      // nada, esa persona simplemente se omite del documento (mismo
+      // criterio "modo evidencia" que ya aplica a Country Conditions).
+      // Sin ningún archivo subido en toda la categoría (modo manual), se
+      // sigue pidiendo la fecha de todos, como antes.
+      const evFeeReceipt = tg.evidencias && tg.evidencias.fee_receipt;
+      const evFbi = tg.evidencias && tg.evidencias.fbi_fingerprint;
+      const hayEvidenciaBiometricos = (tg.biometricos || []).some((b) => b.evidencia_id);
+      const modoEvidenciaFee = Boolean(evFeeReceipt || evFbi || hayEvidenciaBiometricos);
+      const faltantes = (tg.biometricos || []).filter((b) =>
+        modoEvidenciaFee ? b.evidencia_id && !b.fecha : !b.fecha
+      );
       if (faltantes.length > 0) {
         const nombres = faltantes.map((b) => b.persona_nombre || "Respondent").join(", ");
         resultado.innerHTML = `<div class="status err">Falta la fecha de captura de huella (Biometrics Compliance) para ${nombres} en el Tab ${tg.letra}.</div>`;

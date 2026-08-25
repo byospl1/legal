@@ -213,7 +213,19 @@ def _biometrics_line_text(persona_nombre: str | None, fecha: str) -> str:
     return f"Respondent’s Fingerprint Notification Biometric Processing Stamp ({fecha})."
 
 
-def _build_biometrics_compliance_description(biometricos: list[dict]) -> str:
+def _fee_tiene_evidencia_en_items_fijos(evidencias: dict | None) -> bool:
+    """True si `evidencias` trae archivo para fee_receipt y/o fbi_fingerprint
+    — se usa junto con `hay_evidencia_dinamica` (evidencia en biometricos)
+    para decidir si la categoría "fee" está en "modo evidencia" a efectos
+    de qué personas de Biometrics Compliance incluir/exigir (ver
+    _build_biometrics_compliance_description)."""
+    if not evidencias:
+        return False
+    fee_keys = {item["key"] for item in ITEMS_POR_CATEGORIA.get("fee", [])}
+    return any(k in evidencias for k in fee_keys)
+
+
+def _build_biometrics_compliance_description(biometricos: list[dict], modo_evidencia: bool = False) -> str:
     """A diferencia de Form of Identity (un subtítulo COMPARTIDO seguido de
     un renglón por persona), Biometrics Compliance repite el subtítulo
     "Biometrics Compliance." ANTES de cada persona — cada persona es su
@@ -227,14 +239,23 @@ def _build_biometrics_compliance_description(biometricos: list[dict]) -> str:
     cada persona a partir de la segunda (el "Pgs. X-Y" de la 2da persona
     caía junto a la línea envuelta de la 1ra persona, no junto a su propio
     renglón) — repetir el subtítulo por persona reinicia la alineación en
-    cada bloque. Esta sección sigue siendo siempre dinámica y se incluye
-    completa cuando la categoría "fee" está marcada (no depende de si hay
-    evidencia adjunta, igual que Form of Identity)."""
+    cada bloque.
+
+    `modo_evidencia` (2026-08-26, a pedido explícito del usuario): cuando
+    la categoría "fee" tiene evidencia adjunta EN ALGUNA PARTE (fee_receipt,
+    fbi_fingerprint, o Biometrics Compliance de otra persona), una persona
+    SIN su propio archivo de Biometrics Compliance se omite por completo
+    (ni renglón ni fecha obligatoria) — mismo criterio "modo evidencia" que
+    ya aplica a fee_receipt/fbi_fingerprint y a Country Conditions. Sin
+    evidencia adjunta en NINGUNA parte de la categoría (modo manual), se
+    incluyen todas las personas y se exige fecha para todas, como antes."""
     subtitle = _load("subtitle_biometrics_compliance")
     item_tpl = _load("item_biometrics_compliance")
     spacer = _load("spacer")
     bloques = []
     for bio in biometricos:
+        if modo_evidencia and not (bio.get("evidencia") or bio.get("evidencia_id")):
+            continue
         fecha = bio.get("fecha")
         if not fecha:
             raise ValueError("fee requiere 'fecha' para cada persona en Biometrics Compliance")
@@ -243,15 +264,18 @@ def _build_biometrics_compliance_description(biometricos: list[dict]) -> str:
     return spacer.join(bloques)
 
 
-def _build_biometrics_compliance_pages(biometricos: list[dict]) -> str:
+def _build_biometrics_compliance_pages(biometricos: list[dict], modo_evidencia: bool = False) -> str:
     """Un bloque [blank, valor] por persona (blank alineado con el
     subtítulo repetido, valor alineado con la primera línea del renglón de
     esa persona), separados por `blank` — el mismo patrón 1 a 1 que usa
-    _build_biometrics_compliance_description, ver su docstring."""
+    _build_biometrics_compliance_description, ver su docstring (incluyendo
+    el mismo criterio `modo_evidencia` para qué personas se omiten)."""
     pages_value_tpl = _load("pages_value")
     blank = _set_first_t_text(pages_value_tpl, "")
     bloques = []
     for bio in biometricos:
+        if modo_evidencia and not (bio.get("evidencia") or bio.get("evidencia_id")):
+            continue
         info = bio.get("evidencia")
         if info and info.get("pagina_inicio") and info.get("num_paginas"):
             inicio = info["pagina_inicio"]
@@ -367,9 +391,13 @@ def _build_category_xml(
     if categoria == "fee":
         # Biometrics Compliance ya no es un ítem fijo de CATEGORY_FRAGMENTS —
         # es una sección dinámica con un renglón por persona del caso (líder +
-        # cada rider), igual que Form of Identity. Se agrega siempre al final
-        # de la categoría "fee" cuando está marcada.
-        resultado += _build_biometrics_compliance_description(biometricos)
+        # cada rider), agregada al final de la categoría "fee" cuando está
+        # marcada. Con evidencia adjunta en ALGUNA parte de "fee" (modo
+        # evidencia), solo se incluyen/exigen las personas que sí tienen su
+        # propio archivo de Biometrics Compliance — ver
+        # _build_biometrics_compliance_description.
+        modo_evidencia_fee = _fee_tiene_evidencia_en_items_fijos(evidencias) or hay_evidencia_dinamica
+        resultado += _build_biometrics_compliance_description(biometricos, modo_evidencia_fee)
     return resultado
 
 
@@ -449,7 +477,8 @@ def build_pages_cell_content(
                 paras.append(blank)
         bloque = "".join(paras)
         if cat == "fee":
-            bloque += _build_biometrics_compliance_pages(biometricos or _biometricos_por_defecto())
+            modo_evidencia_fee = _fee_tiene_evidencia_en_items_fijos(evidencias) or hay_evidencia_dinamica
+            bloque += _build_biometrics_compliance_pages(biometricos or _biometricos_por_defecto(), modo_evidencia_fee)
         blocks.append(bloque)
     return blank.join(blocks)
 
