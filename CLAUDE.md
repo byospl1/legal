@@ -1108,6 +1108,34 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   pero si al abrir el documento en Word real se ve mal (páginas extra en
   blanco, algo desalineado), avisar con el detalle exacto para ajustar,
   no asumir que quedó bien solo porque la estructura XML es válida.
+- **Ajuste (mismo día): el usuario confirmó que sí quedaron hojas en
+  blanco de más** (justo el riesgo que se había anotado arriba: el
+  relleno de párrafos vacíos, calibrado para simular el salto de página
+  a mano, ahora se suma AL salto real y sobra — si el relleno por sí solo
+  ya casi llenaba una página, el resultado es una página en blanco extra
+  antes de que el `pageBreakBefore` real haga efecto). Se quitó el
+  relleno redundante: 27 párrafos vacíos antes de `1911CE8B`, 17 antes de
+  `4B578A3B`, 16 antes de `7D6FEC8A` (60 en total). **Cuidado si se repite
+  esto en otra plantilla**: el cuadro de texto flotante "Certificate of
+  Translation" vive DENTRO de un solo `<w:p>` de nivel superior (el que
+  aloja el `wp:anchor`) que contiene texto crudo con sus propios
+  `<w:p>...</w:p>` internos (las 2 ramas Choice/Fallback) — un split
+  ingenuo con regex no-greedy confunde esos párrafos internos con
+  párrafos del cuerpo y puede borrar parte del cuadro de texto por error.
+  Se usó un tokenizer con profundidad real (cuenta `<w:p ...>`/`</w:p>`,
+  ignora `<w:p .../>` autocontenido que no tiene cierre aparte — esto
+  rompía el conteo de profundidad la primera vez que se intentó) para
+  identificar los párrafos de nivel superior de verdad antes de borrar.
+- Verificado de nuevo tras el recorte: XML bien formado, 32 SDT intactos,
+  3 `pageBreakBefore` siguen presentes, el cuadro de texto conserva su
+  `wp:anchor` único y sus 2 ramas (`mc:Choice`/`mc:Fallback`) sin tocar,
+  y un `generar_documento` real con el mismo caso de prueba (Sheraryn,
+  con riders) sigue insertando todo correctamente. Suite
+  `tests/run_tests.py` sigue en 10/10. **Sigue sin poder verificarse el
+  render visual real** (misma limitación de LibreOffice) — si el usuario
+  reporta que TODAVÍA queda alguna hoja en blanco de más, probablemente
+  haya que ajustar puntualmente esa sección en particular, no repetir el
+  recorte a ciegas en las tres por igual.
 
 ## Archivos que NO se deben modificar sin instrucción explícita
 
