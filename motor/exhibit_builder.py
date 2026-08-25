@@ -214,38 +214,54 @@ def _biometrics_line_text(persona_nombre: str | None, fecha: str) -> str:
 
 
 def _build_biometrics_compliance_description(biometricos: list[dict]) -> str:
-    """Igual que Form of Identity: un renglón POR PERSONA del caso (líder +
-    cada rider), bajo el subtítulo fijo "Biometrics Compliance." — a
-    diferencia de fee_receipt/fbi_fingerprint (ítems fijos de la categoría),
-    esta sección es siempre dinámica y siempre se incluye completa cuando la
-    categoría "fee" está marcada (no depende de si hay evidencia adjunta,
-    igual que Form of Identity)."""
+    """A diferencia de Form of Identity (un subtítulo COMPARTIDO seguido de
+    un renglón por persona), Biometrics Compliance repite el subtítulo
+    "Biometrics Compliance." ANTES de cada persona — cada persona es su
+    propio bloque tipo "categoría", separado del siguiente por el mismo
+    `spacer` (párrafo vacío) que separa categorías distintas en la tabla.
+    Se decidió así (2026-08-25, a pedido explícito del usuario) porque cada
+    ítem de este renglón es texto largo que casi siempre ocupa 2 líneas
+    visuales al renderizarse en Word — con un solo subtítulo compartido
+    para varias personas, la columna PAGES (ver
+    _build_biometrics_compliance_pages) se desalineaba con el renglón de
+    cada persona a partir de la segunda (el "Pgs. X-Y" de la 2da persona
+    caía junto a la línea envuelta de la 1ra persona, no junto a su propio
+    renglón) — repetir el subtítulo por persona reinicia la alineación en
+    cada bloque. Esta sección sigue siendo siempre dinámica y se incluye
+    completa cuando la categoría "fee" está marcada (no depende de si hay
+    evidencia adjunta, igual que Form of Identity)."""
     subtitle = _load("subtitle_biometrics_compliance")
     item_tpl = _load("item_biometrics_compliance")
-    lineas = [subtitle]
+    spacer = _load("spacer")
+    bloques = []
     for bio in biometricos:
         fecha = bio.get("fecha")
         if not fecha:
             raise ValueError("fee requiere 'fecha' para cada persona en Biometrics Compliance")
         texto = _biometrics_line_text(bio.get("persona_nombre"), fecha)
-        lineas.append(_set_first_t_text(item_tpl, texto))
-    return "".join(lineas)
+        bloques.append(subtitle + _set_first_t_text(item_tpl, texto))
+    return spacer.join(bloques)
 
 
 def _build_biometrics_compliance_pages(biometricos: list[dict]) -> str:
+    """Un bloque [blank, valor] por persona (blank alineado con el
+    subtítulo repetido, valor alineado con la primera línea del renglón de
+    esa persona), separados por `blank` — el mismo patrón 1 a 1 que usa
+    _build_biometrics_compliance_description, ver su docstring."""
     pages_value_tpl = _load("pages_value")
     blank = _set_first_t_text(pages_value_tpl, "")
-    lineas = [blank]
+    bloques = []
     for bio in biometricos:
         info = bio.get("evidencia")
         if info and info.get("pagina_inicio") and info.get("num_paginas"):
             inicio = info["pagina_inicio"]
             fin = inicio + info["num_paginas"] - 1
             texto = f"Pgs. {inicio}" if inicio == fin else f"Pgs. {inicio}-{fin}"
-            lineas.append(_set_first_t_text(pages_value_tpl, texto))
+            valor = _set_first_t_text(pages_value_tpl, texto)
         else:
-            lineas.append(blank)
-    return "".join(lineas)
+            valor = blank
+        bloques.append(blank + valor)
+    return blank.join(bloques)
 
 
 def _biometricos_por_defecto() -> list[dict]:

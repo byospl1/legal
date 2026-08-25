@@ -698,6 +698,51 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   biometricos sin ella; ambos con evidencia; líder+2 riders con evidencia
   mixta) sin romper el comportamiento ya existente.
 
+### Ajuste (mismo día): subtítulo "Biometrics Compliance." repetido por persona, no compartido
+
+- El fix de arriba corrigió que se incluyera/anexara la evidencia
+  correcta, pero el usuario mandó captura de pantalla del documento real
+  generado: con el subtítulo "Biometrics Compliance." compartido UNA vez
+  para las 2 personas (líder + rider), la columna PAGES se desalineaba a
+  partir de la 2da persona — "Pgs. 53-54" (el rango del rider) caía junto
+  a la línea envuelta del renglón del líder, no junto al renglón del
+  rider. Causa: el texto de cada renglón ("Respondent's/Rider's ... Fingerprint
+  Notification Biometric Processing Stamp (FECHA).") es largo y casi
+  siempre ocupa 2 líneas visuales al renderizar en Word, pero
+  `_build_biometrics_compliance_pages` solo reservaba 1 párrafo de PAGES
+  por persona (alineado 1 a 1 con los PÁRRAFOS XML de DESCRIPTION, no con
+  las LÍNEAS VISUALES ya envueltas) — Word alinea columnas de una tabla por
+  altura acumulada real, no por conteo de párrafos, así que un renglón que
+  envuelve a 2 líneas visuales sin su columna PAGES compensando esa altura
+  desalinea todo lo que sigue.
+- El usuario pidió explícitamente tratar cada persona como su propia
+  "categoría" (con su propio subtítulo), en vez de un subtítulo compartido
+  para todas. Fix en `motor/exhibit_builder.py`: tanto
+  `_build_biometrics_compliance_description` como
+  `_build_biometrics_compliance_pages` ahora arman un bloque
+  `[subtítulo, renglón]` (o `[blank, valor]` en PAGES) POR PERSONA, y unen
+  los bloques de distintas personas con el mismo `spacer`/`blank` (párrafo
+  vacío) que ya se usa para separar categorías distintas en la tabla — cada
+  persona reinicia su propio bloque de 2 párrafos en ambas columnas
+  (verificado que los conteos siguen coincidiendo 1 a 1: 5 párrafos con
+  líder+1 rider, 8 con líder+2 riders, siempre `n_desc == n_pages`).
+- **Importante — esto NO garantiza matemáticamente que "Pgs. X-Y" caiga en
+  la línea visual exacta del renglón de esa persona si su propio texto
+  envuelve a 2 líneas** (el subtítulo repetido resetea la alineación ENTRE
+  personas, pero dentro del bloque de una misma persona, si su renglón
+  ocupa 2 líneas y su valor de PAGES solo reserva 1, ese "Pgs. X-Y" queda
+  bien alineado con la PRIMERA línea de su propio renglón — que es lo que
+  importa — pero no hay una línea de PAGES extra reservada para la 2da
+  línea envuelta; no debería hacer falta porque el bloque de la SIGUIENTE
+  persona ya arranca de cero con su propio subtítulo). Como
+  LibreOffice está roto en este sandbox (ver "Limitaciones conocidas" más
+  abajo), este ajuste **no se pudo verificar visualmente en Word real** —
+  solo se verificó la estructura XML (conteo de párrafos, orden). Si al
+  generar un documento real en Word el "Pgs." de alguna persona sigue sin
+  caer en la línea correcta, avisar con el detalle exacto (qué texto/fecha
+  tenía esa persona, en qué línea cayó vs. en cuál debía cuál) para ajustar
+  con precisión en vez de adivinar.
+
 ## Archivos que NO se deben modificar sin instrucción explícita
 
 - `plantillas/*/*.dotx` y `plantillas/*/*.docx` — plantillas originales del
