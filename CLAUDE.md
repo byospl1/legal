@@ -977,10 +977,22 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   documentos reales ("KOSTIV & ASSOCIATES, P.C." en Insuasti, "KOSTIV
   CARDINAL INTERNATIONAL LAW GROUP" en Sheraryn, "Kostiv CARDINAL
   INTERNATIONAL LAW GROUP CORP." en `webex-motion`/John Negron, cada uno
-  con teléfono distinto). Se le preguntó al usuario — **decisión: dejarlo
-  fijo como está** (el de Insuasti, "KOSTIV & ASSOCIATES, P.C."), la
-  variación entre documentos es solo cómo se tipeó cada vez, no una regla
-  real a replicar. No cambiar esto sin que el usuario lo pida.
+  con teléfono distinto). Se le preguntó al usuario — decisión original
+  (2026-08-25): dejarlo fijo como estaba en el ejemplo de Insuasti.
+  **Revertido/actualizado 2026-08-26 a pedido explícito del usuario**: las
+  4 apariciones de texto fijo "KOSTIV & ASSOCIATES, P.C." (2, en el
+  membrete de la primera hoja y en el sello antes de PROOF OF SERVICE) y
+  "Kostiv & Associates" (2, dentro del cuadro de texto "Certificate of
+  Translation", bajo la firma del traductor) se reemplazaron por texto
+  literal fijo "KOSTIV CARDINAL INTERNATIONAL LAW GROUP" — **solo en esta
+  plantilla**, no se tocó `webex-motion` (que ya trae su propia variante
+  "Kostiv CARDINAL INTERNATIONAL LAW GROUP CORP." de fábrica, sin tocar).
+  Edición directa por `str.replace` sobre `word/document.xml` con
+  `ooxml_utils.unpack`/`rezip` (no es un campo/SDT, es texto fijo de la
+  plantilla en las 4 ocurrencias). Verificado: 32 SDT intactos,
+  `generar_documento` real inserta "KOSTIV CARDINAL INTERNATIONAL LAW
+  GROUP" x4 y CERO ocurrencias de "Kostiv" viejo, `tests/run_tests.py`
+  10/10.
 - Verificado con `motor.fill_engine.generar_documento` real, caso de
   prueba CON riders (replicando el patrón de Sheraryn): los tres formatos
   de `cliente_nombre` cayeron exactamente en los lugares correctos,
