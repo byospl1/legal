@@ -1037,6 +1037,36 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   con `dialecto_interprete=""` el placeholder "___________" sigue
   presente en el XML. Suite `tests/run_tests.py` sigue en 10/10.
 
+## `written-pleadings`: el encabezado/caption debe verse en Title Case sin importar cómo se tipeó el caso (2026-08-26)
+
+- El usuario mandó captura de un caso con `cliente_nombre` tipeado en
+  MAYÚSCULAS en el Paso 1 — el encabezado "Attorney for Respondent(s)" y
+  la caja de caption "In the Matter of" salían también en MAYÚSCULAS
+  (porque usaban `cliente_nombre` = `nombre_para_documento(case)` tal
+  cual), y reportó que eso "movía el formato" — quería esos dos lugares
+  siempre en Title Case (ej. "Mendez Rodriguez, Sheraryn Mileny et al"),
+  sin importar cómo se haya tipeado el nombre en el caso.
+- **No se tocó `nombre_para_documento`/`case_store` ni la clave
+  `"cliente_nombre"` de `_resolve_values`** — esas las usan TAMBIÉN
+  `i589-tab-cover`, `webex-motion` y las 3 `motion-withdraw-*`, que
+  siempre mostraron el nombre tal cual se tipeó y nadie reportó problema
+  con eso; cambiar su comportamiento habría afectado 4 plantillas en
+  producción sin que nadie lo pidiera. Se agregó un campo derivado NUEVO,
+  exclusivo de `written-pleadings`: `cliente_nombre_titulo` =
+  `case["cliente_nombre"].title()` (+ " et al" si hay riders, en
+  minúscula) — `fill_engine._nombre_titulo`. Solo esta plantilla usa
+  Title Case en el nombre; las demás siguen mostrando el nombre tal cual
+  está en el caso.
+- `field_map.json` de `written-pleadings`: el grupo que antes se llamaba
+  `cliente_nombre` (ids `920000003`/`920000004`, encabezado + caption) se
+  renombró a `cliente_nombre_titulo`. `cliente_nombre_mayus` y
+  `cliente_nombre_lead_mayus` (firmas y Declaration) no cambiaron — siguen
+  forzando `.upper()`, inmunes a este problema.
+- Verificado con `generar_documento` real, caso con `cliente_nombre` en
+  MAYÚSCULAS: encabezado/caption salen "Mendez Rodriguez, Sheraryn Mileny
+  et al" (Title Case), firmas/sello siguen "MENDEZ RODRIGUEZ, SHERARYN
+  MILENY ET AL" (mayúsculas). Suite `tests/run_tests.py` sigue en 10/10.
+
 ## Archivos que NO se deben modificar sin instrucción explícita
 
 - `plantillas/*/*.dotx` y `plantillas/*/*.docx` — plantillas originales del

@@ -629,10 +629,24 @@ def _juez_apellido_mayus(juez: str | None) -> str | None:
     return apellido.upper() or None
 
 
+def _nombre_titulo(nombre: str | None) -> str | None:
+    """Normaliza a Title Case (ej. "MENDEZ RODRIGUEZ, SHERARYN MILENY" ->
+    "Mendez Rodriguez, Sheraryn Mileny") — el nombre del cliente en
+    `case_store` puede haberse tipeado en cualquier combinación de
+    mayúsculas/minúsculas; se usa en written-pleadings para el encabezado
+    "Attorney for Respondent(s)" y la caja de caption "In the Matter of",
+    que deben verse siempre en Title Case sin importar cómo se tipeó."""
+    if not nombre:
+        return None
+    return nombre.title()
+
+
 def _resolve_values(case: dict, document_instance: dict) -> dict[str, str]:
     from motor.case_store import a_number_para_documento, nombre_para_documento
 
     preparador = case.get("preparador")
+    riders = case.get("riders") or []
+    nombre_titulo = _nombre_titulo(case["cliente_nombre"])
     values = {
         "cliente_nombre": nombre_para_documento(case),
         # written-pleadings: el nombre del cliente cambia de forma según el
@@ -640,6 +654,10 @@ def _resolve_values(case: dict, document_instance: dict) -> dict[str, str]:
         # → "_notas"). Sin riders los tres coinciden con "cliente_nombre".
         "cliente_nombre_mayus": nombre_para_documento(case).upper(),
         "cliente_nombre_lead_mayus": case["cliente_nombre"].upper(),
+        # written-pleadings: encabezado "Attorney for Respondent(s)" y caja
+        # de caption "In the Matter of" — siempre Title Case, sin importar
+        # cómo se tipeó cliente_nombre en el caso (ver CLAUDE.md).
+        "cliente_nombre_titulo": f"{nombre_titulo} et al" if riders else nombre_titulo,
         "a_number": a_number_para_documento(case),
         "corte_sede": case["corte_sede"],
         "juez": case["juez"],
