@@ -1067,6 +1067,48 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   et al" (Title Case), firmas/sello siguen "MENDEZ RODRIGUEZ, SHERARYN
   MILENY ET AL" (mayúsculas). Suite `tests/run_tests.py` sigue en 10/10.
 
+## `written-pleadings`: saltos de página reales entre secciones (2026-08-26)
+
+- **Pedido explícito del usuario** (a diferencia de `webex-motion`, donde
+  este mismo enfoque se intentó sin que lo pidieran y se revirtió — ver
+  "`webex-motion`: saltos de página por sección" más abajo, ese ítem sigue
+  vigente para `webex-motion` específicamente). Motivo: al agregar el
+  ejemplo con dos cargos separados por coma en `cargo_removibilidad`, el
+  campo pasó a ocupar una línea más y **todo lo que venía después se
+  recorrió** — la plantilla nunca tuvo saltos de página reales, cada
+  sección caía en su página por puro volumen de párrafos vacíos de
+  relleno (mismo patrón ya documentado para `webex-motion`).
+- Fix: `<w:pageBreakBefore/>` agregado a 3 párrafos (por `paraId`, edición
+  directa sobre `WRITTEN_PLEADINGS.docx` con `ooxml_utils.unpack`/`rezip`):
+  `1911CE8B` ("RESPONDENT'S PLEADING DECLARATION"), `4B578A3B`
+  ("DECLARACIÓN DE ALEGATOS DEL DEMANDADO"), y `7D6FEC8A` — este último es
+  el sello de nombre/A# que va JUSTO ANTES de "PROOF OF SERVICE", no el
+  párrafo del título en sí, para que el sello no quede huérfano en la
+  página anterior separado de su encabezado.
+- **A propósito NO se tocó el relleno de párrafos vacíos existente entre
+  secciones** (mismo criterio conservador que ya se documentó para
+  `webex-motion`: quitar el relleno es lo que rompió el formato la vez
+  pasada) — el salto real se agregó AL FINAL de cada bloque de relleno,
+  como una capa adicional, no como reemplazo. Si en el futuro se quiere
+  además recortar el relleno sobrante, es un cambio aparte, a pedido
+  explícito y con verificación visual real.
+- El cuadro de texto flotante "Certificate of Translation" (anchorado en
+  un párrafo ANTES de `4B578A3B`) no se ve afectado — un
+  `pageBreakBefore` en un párrafo posterior no cambia la página del
+  párrafo que aloja el anchor, que sigue determinada por el flujo natural
+  hasta ese punto (sin cambios).
+- Verificado con `generar_documento` real: XML bien formado, 32 SDT
+  intactos, 3 `<w:pageBreakBefore/>` presentes en el documento generado,
+  `validation_ok=True`. Suite `tests/run_tests.py` sigue en 10/10.
+- **Limitación conocida, igual que con `webex-motion`: no se pudo
+  verificar el render visual real en este sandbox** (LibreOffice roto,
+  ver "Limitaciones conocidas" más abajo). A diferencia de la vez que
+  falló, acá se optó por el enfoque más conservador posible (agregar
+  saltos sin tocar el relleno existente, un solo `paraId` por sección) —
+  pero si al abrir el documento en Word real se ve mal (páginas extra en
+  blanco, algo desalineado), avisar con el detalle exacto para ajustar,
+  no asumir que quedó bien solo porque la estructura XML es válida.
+
 ## Archivos que NO se deben modificar sin instrucción explícita
 
 - `plantillas/*/*.dotx` y `plantillas/*/*.docx` — plantillas originales del
