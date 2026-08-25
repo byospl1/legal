@@ -81,6 +81,25 @@ tiene su sección con el detalle completo más abajo en este mismo archivo.
     texto empieza con ese patrón numérico, dejando intacto el resto
     (tipo/modalidad) y sin tocar nada si ya viene en palabras. → ver "Campo
     'Próxima audiencia'".
+12. **Biometrics Compliance (por persona) recién agregado: no anexaba los
+    PDFs y dejaba Fee Receipt/FBI Fingerprint sin evidencia.** Dos bugs
+    reales, ambos porque `biometricos` vive FUERA del dict genérico
+    `evidencias`: (a) `app.py`, el gate `tiene_evidencia` que decide si se
+    llama a `_resolver_paginas_evidencia` (la función que resuelve páginas
+    Y arma la lista de PDFs a fusionar) no miraba `tg["biometricos"]` — si
+    la ÚNICA evidencia del Tab era de Biometrics Compliance, nunca se
+    fusionaba nada aunque el usuario sí hubiera subido el archivo. (b)
+    `motor/exhibit_builder.frag_indices_incluidos("fee", evidencias)` solo
+    mira el dict `evidencias` (fee_receipt/fbi_fingerprint) para decidir si
+    está en "modo manual" (incluir todo) o "modo evidencia" (incluir solo
+    lo que tiene archivo) — sin evidencia de esos dos ítems fijos, caía
+    siempre en modo manual e incluía Fee Receipt/FBI Fingerprint aunque no
+    tuvieran nada adjunto. Fix: nuevo parámetro
+    `hay_evidencia_dinamica: bool` en `frag_indices_incluidos`, que el
+    llamador setea a `True` para "fee" cuando algún `biometricos` tiene
+    evidencia — fuerza el modo evidencia (excluye los ítems fijos sin
+    archivo) aunque `evidencias` esté vacío. → ver "Bug: Biometrics
+    Compliance no anexaba evidencia".
 
 ## Plantillas registradas (`plantillas/registro.json`)
 
@@ -595,6 +614,89 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   `build_exhibit_table` con líder + 1 rider, ambos con archivo — páginas
   encadenadas correctamente (1-2 fee_receipt, 3 biometrics líder, 4
   biometrics rider).
+
+## Bug: Biometrics Compliance no anexaba evidencia (2026-08-25)
+
+- **Reporte del usuario**: comparó un documento generado real (Tab D, caso
+  con líder + 1 rider, evidencia de Biometrics Compliance subida para
+  ambos) contra un ejemplo de cómo debía verse. Dos problemas visibles: (1)
+  Fee Receipt y FBI Fingerprint aparecían en la tabla sin evidencia
+  adjunta (nunca se subió nada para esos dos ítems en ese Tab — no debían
+  aparecer), y (2) el PDF final no traía anexadas las páginas de evidencia
+  de Biometrics Compliance en absoluto (el documento se quedaba en 4
+  páginas: portada, tabla de exhibits, divisoria "EXHIBIT D", Proof of
+  Service — sin las páginas reales del I-797C subido), aunque la columna
+  PAGES sí mostraba un rango "Pgs. 51-54" (calculado del lado del
+  navegador, nunca verificado contra lo que el backend realmente fusionó).
+- **Causa raíz, dos bugs independientes** — ambos por la misma razón de
+  fondo: `biometricos` (la lista por-persona agregada en la sesión
+  anterior, ver sección de arriba) vive FUERA del dict genérico
+  `evidencias` que ya usaban `fee_receipt`/`fbi_fingerprint`, y dos piezas
+  de código que ya existían antes de `biometricos` nunca se actualizaron
+  para saber de su existencia:
+  1. `app.py`, el gate `tiene_evidencia` (justo antes de decidir si se
+     llama a `_resolver_paginas_evidencia` — la función que calcula
+     páginas Y arma la lista de PDFs que después se fusionan al PDF de
+     portada) solo miraba `tg["evidencias"]`/`identidades`/
+     `documentos_se`, nunca `tg["biometricos"]`. Si en un Tab la ÚNICA
+     evidencia subida era de Biometrics Compliance (como en el caso
+     reportado), `tiene_evidencia` daba `False` y **todo el mecanismo de
+     resolución de páginas y fusión de PDFs se saltaba por completo** —
+     `bio["evidencia"]` nunca se poblaba, y por lo tanto tampoco se
+     agregaba nada a `docs_con_pagina` más abajo en el mismo archivo (el
+     bloque que arma la lista de rutas a fusionar con
+     `combinar_portada_y_evidencia`). El "Pgs. 51-54" que sí se veía en el
+     documento venía del cálculo hecho en el navegador
+     (`recalcularPaginas()` en `static/app.js`, que sí sabe sumar páginas
+     de `card._biometricosEvidencia` para mostrarle un preview al
+     usuario) y se usaba tal cual como texto de fallback — sin que el
+     backend hubiera resuelto ni fusionado nada real. Fix: agregar
+     `or any(b.get("evidencia_id") for b in (tg.get("biometricos") or
+     []))` a la condición de `tiene_evidencia`.
+  2. `motor/exhibit_builder.frag_indices_incluidos(categoria, evidencias)`
+     decide si una categoría con ítems fijos (ej. "fee") está en "modo
+     manual" (nada subido → incluir todos los ítems fijos) o "modo
+     evidencia" (algo subido → incluir solo los ítems fijos que sí tienen
+     archivo) mirando ÚNICAMENTE el dict `evidencias`
+     (`fee_receipt`/`fbi_fingerprint`). Nunca sabía que `biometricos`
+     pudiera tener evidencia — así que con evidencia SOLO en
+     `biometricos` (y nada en `evidencias` para esos dos ítems fijos),
+     `evidencias` llegaba vacío y la función cae en "modo manual",
+     incluyendo Fee Receipt y FBI Fingerprint sin archivo, en vez de
+     omitirlos (que es lo correcto: hay evidencia en la categoría, solo
+     que vive en la sección dinámica). Fix: nuevo parámetro
+     `hay_evidencia_dinamica: bool = False` en `frag_indices_incluidos` —
+     cuando es `True`, la función NO cae en modo manual aunque
+     `evidencias` esté vacío (los ítems fijos sin evidencia simplemente no
+     se incluyen). Los dos llamadores que arman la tabla
+     (`_build_category_xml` para DESCRIPTION, y el loop por categoría
+     dentro de `build_pages_cell_content` para PAGES) lo setean a `True`
+     solo para `categoria == "fee"` y solo si algún `biometricos` trae
+     `evidencia`/`evidencia_id` — **hay que pasarlo en AMBOS lugares**, no
+     alcanza con uno solo, porque DESCRIPTION y PAGES cada uno vuelve a
+     llamar `frag_indices_incluidos` por su cuenta; si solo se arregla uno
+     de los dos, las columnas quedan desalineadas (se detectó exactamente
+     así al probar: 3 párrafos en DESCRIPTION vs 5 en PAGES antes de
+     corregir el segundo llamador).
+- **Por qué no se detectó en la sesión anterior**: las pruebas de esa
+  sesión (alineación PAGES/DESCRIPTION, pipeline `_resolver_paginas_evidencia`
+  → `build_exhibit_table`) siempre incluyeron evidencia de `fee_receipt`
+  *junto con* la de `biometricos` en el mismo caso de prueba — nunca se
+  probó el caso real reportado por el usuario, evidencia SOLO en
+  `biometricos` y nada en los ítems fijos de "fee". Si se agrega evidencia
+  dinámica a otra categoría con ítems fijos en el futuro, probar
+  explícitamente el caso "evidencia SOLO en la sección dinámica, nada en
+  los ítems fijos" — es el caso que expone este tipo de bug.
+- Verificado con pruebas manuales tras el fix (no hay test suite
+  automatizada en este proyecto): reproducido el escenario exacto
+  reportado (líder + 1 rider, evidencia solo en `biometricos`) — Fee
+  Receipt/FBI Fingerprint ya no aparecen, DESCRIPTION y PAGES quedan en 3
+  párrafos alineados 1 a 1 ("Pgs. 51-52"/"Pgs. 53-54" en las líneas
+  correctas), y `_resolver_paginas_evidencia` + el gate `tiene_evidencia`
+  corregido sí resuelven y dejan lista la fusión real de los PDFs. También
+  se corrieron 3 escenarios de regresión (fee_receipt con evidencia y
+  biometricos sin ella; ambos con evidencia; líder+2 riders con evidencia
+  mixta) sin romper el comportamiento ya existente.
 
 ## Archivos que NO se deben modificar sin instrucción explícita
 

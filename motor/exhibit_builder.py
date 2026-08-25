@@ -129,28 +129,37 @@ def pluralizar_respondent(xml: str) -> str:
     return xml
 
 
-def frag_indices_incluidos(categoria: str, evidencias: dict | None) -> set[int]:
+def frag_indices_incluidos(
+    categoria: str, evidencias: dict | None, hay_evidencia_dinamica: bool = False
+) -> set[int]:
     """Índices (dentro de CATEGORY_FRAGMENTS[categoria]) que deben incluirse
     en DESCRIPTION y PAGES. Los subtítulos (índices que no son de ningún
     ítem) siempre se incluyen junto con cualquier ítem incluido de la
     categoría — salvo que estén atados a un ítem puntual vía
-    SUBTITULOS_ATADOS_A_ITEM (ej. "Biometrics Compliance" solo acompaña a
-    su propio ítem, no a Fee Receipt/FBI Fingerprint). Entre los ítems: si
-    NINGUNO de los de esta categoría tiene evidencia adjunta, se incluyen
-    todos (modo manual). Si AL MENOS UNO la tiene, solo se incluyen los que
-    sí tienen archivo. No aplica a form_of_identity (ver
-    _build_form_of_identity_*)."""
+    SUBTITULOS_ATADOS_A_ITEM. Entre los ítems: si NINGUNO de los de esta
+    categoría tiene evidencia adjunta, se incluyen todos (modo manual). Si
+    AL MENOS UNO la tiene, solo se incluyen los que sí tienen archivo. No
+    aplica a form_of_identity (ver _build_form_of_identity_*).
+
+    `hay_evidencia_dinamica`: True cuando la categoría tiene evidencia
+    adjunta en una sección dinámica que vive FUERA de este mecanismo (hoy:
+    Biometrics Compliance dentro de "fee", ver `biometricos` en
+    _build_category_xml/build_pages_cell_content) — evita que, con
+    evidencia SOLO en esa sección dinámica y ninguna en los ítems fijos
+    (evidencias vacío), esta función caiga en "modo manual: incluir todo" e
+    incluya de más ítems fijos sin evidencia (ej. Fee Receipt/FBI
+    Fingerprint cuando solo se subió Biometrics Compliance)."""
     frag_names = CATEGORY_FRAGMENTS[categoria]
     items = ITEMS_POR_CATEGORIA.get(categoria, [])
     item_frag_indices = {item["frag_index"] for item in items}
     subtitle_indices = set(range(len(frag_names))) - item_frag_indices
     atados = SUBTITULOS_ATADOS_A_ITEM.get(categoria, {})
 
-    if not evidencias:
+    if not evidencias and not hay_evidencia_dinamica:
         return set(range(len(frag_names)))
 
-    incluidos_items = {item["frag_index"] for item in items if item["key"] in evidencias}
-    if not incluidos_items:
+    incluidos_items = {item["frag_index"] for item in items if evidencias and item["key"] in evidencias}
+    if not incluidos_items and not hay_evidencia_dinamica:
         return set(range(len(frag_names)))
 
     incluidos_subtitulos = {
@@ -335,14 +344,16 @@ def _build_category_xml(
         if tipo_fee:
             parts[0] = _replace_in_first_t(parts[0], "Fee Receipt", f"{_xml_escape(tipo_fee)} Fee Receipt")
 
-    incluidos = frag_indices_incluidos(categoria, evidencias)
+    biometricos = biometricos or _biometricos_por_defecto()
+    hay_evidencia_dinamica = categoria == "fee" and any(b.get("evidencia") or b.get("evidencia_id") for b in biometricos)
+    incluidos = frag_indices_incluidos(categoria, evidencias, hay_evidencia_dinamica)
     resultado = "".join(p for i, p in enumerate(parts) if i in incluidos)
     if categoria == "fee":
         # Biometrics Compliance ya no es un ítem fijo de CATEGORY_FRAGMENTS —
         # es una sección dinámica con un renglón por persona del caso (líder +
         # cada rider), igual que Form of Identity. Se agrega siempre al final
         # de la categoría "fee" cuando está marcada.
-        resultado += _build_biometrics_compliance_description(biometricos or _biometricos_por_defecto())
+        resultado += _build_biometrics_compliance_description(biometricos)
     return resultado
 
 
@@ -405,7 +416,8 @@ def build_pages_cell_content(
             continue
         frag_names = CATEGORY_FRAGMENTS[cat]
         items_by_frag_index = {item["frag_index"]: item for item in ITEMS_POR_CATEGORIA.get(cat, [])}
-        incluidos = frag_indices_incluidos(cat, evidencias)
+        hay_evidencia_dinamica = cat == "fee" and bool(hay_biometricos_con_datos)
+        incluidos = frag_indices_incluidos(cat, evidencias, hay_evidencia_dinamica)
         paras = []
         for idx in range(len(frag_names)):
             if idx not in incluidos:

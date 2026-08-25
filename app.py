@@ -421,6 +421,7 @@ def api_generar():
         tg.get("evidencias")
         or any(i.get("evidencia_id") for i in (tg.get("identidades") or []))
         or any(d.get("evidencia_id") for d in (tg.get("documentos_se") or []))
+        or any(b.get("evidencia_id") for b in (tg.get("biometricos") or []))
         for tg in exhibits
     )
     if tiene_evidencia:
