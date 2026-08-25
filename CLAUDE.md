@@ -61,12 +61,21 @@ tiene su sección con el detalle completo más abajo en este mismo archivo.
    espacios/tabs para campos de longitud variable. → ver "`webex-motion`: el
    nombre del cliente en la firma se rompía".
 9. **Saltos de página reales rompieron el formato de `webex-motion` —
-   REVERTIDO.** Se intentó cambiar los rellenos de párrafos vacíos por
-   `<w:pageBreakBefore/>` reales para arreglar una línea huérfana. El
-   usuario lo revirtió ("se arruinó el formato"). **No repetir ese cambio**
-   sin pedirlo explícitamente y validar el render real en Word (no se puede
-   verificar visualmente en este sandbox, LibreOffice está roto acá). → ver
-   "`webex-motion`: saltos de página por sección".
+   REVERTIDO (intento de un solo paso).** Se intentó cambiar los rellenos
+   de párrafos vacíos por `<w:pageBreakBefore/>` reales para arreglar una
+   línea huérfana, quitando el relleno viejo en el mismo cambio. El
+   usuario lo revirtió ("se arruinó el formato"). **No repetir ese cambio
+   en `webex-motion`** sin pedirlo explícitamente y validar el render real
+   en Word. Más tarde, en `written-pleadings`, la MISMA técnica funcionó
+   bien haciéndola en DOS PASOS (agregar el salto real primero, sin tocar
+   el relleno; recién después, ya confirmado por el usuario que sobraban
+   páginas en blanco, quitar el relleno redundante con cirugía quirúrgica
+   por `paraId`) — **la técnica de salto real + relleno redundante NO es
+   exclusiva de `written-pleadings`, es reutilizable en cualquier
+   plantilla con este mismo patrón** (secciones que caen en su página por
+   puro volumen de párrafos vacíos de relleno). → ver "`webex-motion`:
+   saltos de página por sección" y "Técnica general: saltos de página
+   reales reemplazando relleno de párrafos vacíos".
 10. **CC/OSAC exigía los dos años aunque solo se subiera evidencia de uno.**
     Dos validaciones independientes (`_build_category_xml` en Python y
     `generarDocumento()` en JS) exigían ambos años sin consultar cuál
@@ -1069,10 +1078,17 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
 
 ## `written-pleadings`: saltos de página reales entre secciones (2026-08-26)
 
-- **Pedido explícito del usuario** (a diferencia de `webex-motion`, donde
-  este mismo enfoque se intentó sin que lo pidieran y se revirtió — ver
-  "`webex-motion`: saltos de página por sección" más abajo, ese ítem sigue
-  vigente para `webex-motion` específicamente). Motivo: al agregar el
+**Nota: esta sección documenta el caso concreto donde se aplicó la técnica
+por primera vez — la técnica en sí (salto real en dos pasos) es GENERAL,
+no exclusiva de esta plantilla; ver "Técnica general: saltos de página
+reales reemplazando relleno de párrafos vacíos" más abajo para la versión
+reutilizable.**
+
+- **Pedido explícito del usuario** (a diferencia del intento de un solo
+  paso en `webex-motion`, donde este enfoque se probó sin pedirlo y se
+  revirtió — ver "`webex-motion`: saltos de página por sección" más abajo,
+  ese ítem sigue vigente para `webex-motion` específicamente mientras no
+  se reintente con el patrón de dos pasos). Motivo: al agregar el
   ejemplo con dos cargos separados por coma en `cargo_removibilidad`, el
   campo pasó a ocupar una línea más y **todo lo que venía después se
   recorrió** — la plantilla nunca tuvo saltos de página reales, cada
@@ -1136,6 +1152,56 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   reporta que TODAVÍA queda alguna hoja en blanco de más, probablemente
   haya que ajustar puntualmente esa sección en particular, no repetir el
   recorte a ciegas en las tres por igual.
+
+## Técnica general: saltos de página reales reemplazando relleno de párrafos vacíos
+
+**No es exclusiva de `written-pleadings`** — es el patrón a seguir en
+CUALQUIER plantilla que finja saltos de página entre secciones con runs
+largos de párrafos vacíos (en vez de `<w:pageBreakBefore/>` real), cuando
+el usuario pida arreglar ese desborde. Ya se probó de dos formas distintas
+con resultados opuestos, y la diferencia importa:
+
+- **`webex-motion` (2026-08-19): un solo paso — agregar el salto Y quitar
+  el relleno viejo al mismo tiempo. Resultado: "se arruinó el formato",
+  revertido.** (detalle en "`webex-motion`: saltos de página por sección"
+  más arriba).
+- **`written-pleadings` (2026-08-26): dos pasos separados. Resultado:
+  funcionó, confirmado por el usuario.**
+  1. Agregar `<w:pageBreakBefore/>` real al primer párrafo de cada
+     sección, SIN tocar el relleno de párrafos vacíos existente todavía.
+     Esto por sí solo puede dejar páginas en blanco de más (el relleno
+     viejo, calibrado a mano para simular el salto, ahora se suma AL
+     salto real) — es un resultado esperado de este paso, no un fallo.
+  2. Solo después de que el usuario confirme que sobran páginas en
+     blanco, quitar el relleno redundante que quedó inmediatamente ANTES
+     de cada punto con salto real nuevo (los párrafos vacíos entre el
+     final del contenido anterior y el `paraId` con el
+     `pageBreakBefore`), dejando el resto de la plantilla intacto.
+- **Por qué separar en dos pasos evita el problema que rompió
+  `webex-motion`**: no está confirmado con certeza qué exactamente rompió
+  el formato la vez que se hizo todo junto (no se pudo verificar render
+  visual real, LibreOffice roto en este sandbox) — pero hacerlo en dos
+  pasos permite verificar/confirmar cada cambio por separado en vez de
+  apostar a que la combinación completa sale bien a la primera. Si se
+  reintenta esta técnica en `webex-motion` (requiere pedido explícito del
+  usuario, ver ítem revertido arriba) o en cualquier otra plantilla,
+  **seguir el mismo patrón de dos pasos**, no el de un solo paso que ya
+  falló una vez.
+- **Cirugía del paso 2, técnica reutilizable**: identificar los párrafos
+  vacíos inmediatamente anteriores al `paraId` de destino con un tokenizer
+  con profundidad real de `<w:p>` (cuenta aperturas/cierres, ignora
+  explícitamente `<w:p .../>` autocontenido que no tiene cierre aparte —
+  un split ingenuo con regex no-greedy confunde párrafos internos de un
+  cuadro de texto flotante con párrafos del cuerpo, y puede borrar parte
+  de ese cuadro de texto por error). Ver
+  `/tmp/.../scratchpad/wp_build/trim_blank_padding.py` (no versionado en
+  el repo, script de referencia de esa sesión) para la implementación
+  completa del tokenizer.
+- Sigue aplicando la limitación de siempre: **no se puede verificar el
+  render visual real en este sandbox** (LibreOffice roto) — cualquier
+  aplicación de esta técnica a una plantilla nueva debe avisarse al
+  usuario como no verificada visualmente, y ajustarse con el detalle
+  exacto que reporte tras probarla en Word real.
 
 ## Archivos que NO se deben modificar sin instrucción explícita
 
