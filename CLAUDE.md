@@ -980,6 +980,63 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   libre ("RB.") se insertó tal cual. Suite `tests/run_tests.py` sigue en
   10/10.
 
+## `written-pleadings`: resaltado amarillo heredado + nombres largos rotos en 3 firmas (2026-08-25)
+
+- El usuario generó un documento real (Sheraryn, con riders) con la
+  plantilla y mandó capturas de pantalla comparándolo contra el documento
+  real de referencia. Dos problemas visibles:
+  1. **Todo el texto de los campos salía resaltado en amarillo.** El
+     `.docx` de ejemplo original (Insuasti) traía `<w:highlight
+     w:val="yellow"/>` en 61 lugares (probablemente el abogado resaltó el
+     documento para revisarlo) — al copiar el `rPr` de cada run original
+     al `sdtPr` de su SDT (para que el valor de reemplazo mantuviera el
+     mismo formato), el resaltado se copió también sin querer. Fix:
+     `re.sub(r"<w:highlight[^/]*/>", "", xml)` sobre TODO `document.xml`
+     (no solo los campos) — el resaltado no debe estar en ningún lado de
+     esta plantilla.
+  2. **El nombre del cliente + "ET AL" se rompía a 2 líneas cayendo al
+     margen izquierdo** en 3 renglones de firma (bajo el abogado, bajo
+     cada Declaration en inglés/español) — el mismo bug ya documentado
+     para `webex-motion` (ítem 8 del checklist): tabs + espacios literales
+     calibrados para el nombre corto de Insuasti ("INSUASTI RUIZ, EDWIN
+     ALBERTO", 29 caracteres) se quedan cortos con un nombre más largo
+     ("MENDEZ RODRIGUEZ, SHERARYN MILENY ET AL", 40 caracteres). A
+     diferencia de `webex-motion` (que se arregló con `w:ind w:left` real),
+     acá se comparó directamente contra el `.docx` real de Sheraryn (que
+     SÍ se ve bien) y se igualó la cantidad exacta de tabs que usa ese
+     documento que funciona: de 5/6/7 tabs (+ hasta 22 espacios sueltos)
+     a 4/4/5 tabs respectivamente en los 3 renglones — confirmado que los
+     3 `paraId` coinciden exactamente entre ambos `.docx`, así que es la
+     misma plantilla, solo con distinto padding. Ver
+     `plantillas/written-pleadings/field_map.json` para los IDs exactos
+     (`920000005`, `920000007`, `920000009`).
+- **`dialecto_interprete` pasó a ser opcional.** Antes la validación
+  genérica de `campos_extra` (ver ítem 17 del checklist) lo exigía como
+  cualquier otro campo — pero el usuario aclaró que si no se especifica
+  dialecto, debe quedar la línea en blanco original ("___________"), no
+  bloquear la generación. Fix: nueva clave `"opcional": true` en su
+  entrada de `registro.json` → `static/app.js` (`generarDocumento`) la
+  respeta (`if (!c.opcional && !valor)`) → `fill_engine._resolve_values`
+  convierte string vacío a `None` con `... or None` (si no, un string
+  vacío SÍ es distinto de `None` y igual pisaría el placeholder con nada).
+  Es el ÚNICO campo de esta plantilla con este tratamiento — los demás
+  (`fecha_nta`, `cargo_removibilidad`, etc.) siguen siendo obligatorios
+  porque su placeholder de fábrica es texto real del caso Insuasti (dejar
+  uno vacío filtraría datos de ese caso a otro cliente), mientras que el
+  placeholder de `dialecto_interprete` siempre fue un blanco genérico
+  ("___________"), seguro de dejar como está.
+- Las líneas de firma (imagen dinámica de abogado/preparador/traductor)
+  YA se comportan así desde que se creó la plantilla — sin PNG cargado
+  para esa persona, cae al texto de blanco de siempre (mismo mecanismo
+  `_apply_firmas_imagen` de las demás plantillas). No hizo falta tocar
+  nada ahí, solo confirmar que seguía intacto tras estos cambios.
+- Verificado con `motor.fill_engine.generar_documento` real (caso con
+  riders, replicando Sheraryn): `<w:highlight` = 0 ocurrencias en el
+  documento generado, los 4 renglones con "MENDEZ RODRIGUEZ..." muestran
+  4/4/5/0 tabs (coincide exacto con el documento real de referencia), y
+  con `dialecto_interprete=""` el placeholder "___________" sigue
+  presente en el XML. Suite `tests/run_tests.py` sigue en 10/10.
+
 ## Archivos que NO se deben modificar sin instrucción explícita
 
 - `plantillas/*/*.dotx` y `plantillas/*/*.docx` — plantillas originales del

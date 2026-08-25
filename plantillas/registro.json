@@ -59,7 +59,8 @@
         {
           "nombre": "dialecto_interprete",
           "etiqueta": "Dialecto del intérprete",
-          "placeholder": "ej. ___________ (dejar en blanco si no aplica)"
+          "placeholder": "ej. ___________ (dejar en blanco si no aplica)",
+          "opcional": true
         },
         {
           "nombre": "traductor",

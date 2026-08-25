@@ -1129,7 +1129,7 @@ async function generarDocumento() {
 
   const camposExtraValues = collectCamposExtra();
   for (const c of (plantilla && plantilla.campos_extra) || []) {
-    if (!camposExtraValues[c.nombre]) {
+    if (!c.opcional && !camposExtraValues[c.nombre]) {
       resultado.innerHTML = `<div class="status err">Falta el campo "${c.etiqueta}".</div>`;
       return;
     }

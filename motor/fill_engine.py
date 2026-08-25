@@ -670,7 +670,10 @@ def _resolve_values(case: dict, document_instance: dict) -> dict[str, str]:
         "formas_alivio": document_instance.get("formas_alivio"),
         "horas_estimadas": document_instance.get("horas_estimadas"),
         "idioma_interprete": document_instance.get("idioma_interprete"),
-        "dialecto_interprete": document_instance.get("dialecto_interprete"),
+        # opcional: si se deja vacío, no se incluye en `values` — el SDT
+        # conserva su línea en blanco original ("___________") en vez de
+        # quedar vacío (ver CLAUDE.md, "written-pleadings: dialecto...").
+        "dialecto_interprete": document_instance.get("dialecto_interprete") or None,
         "traductor": document_instance.get("traductor"),
         "traductor_abreviado": document_instance.get("traductor_abreviado"),
         "documento_traducido": document_instance.get("documento_traducido"),
