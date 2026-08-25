@@ -67,6 +67,11 @@
           "placeholder": "ej. Bruno Briz"
         },
         {
+          "nombre": "traductor_abreviado",
+          "etiqueta": "Firma abreviada del traductor (como firma de verdad)",
+          "placeholder": "ej. Bruno B. o RB."
+        },
+        {
           "nombre": "documento_traducido",
           "etiqueta": "Nombre del documento traducido",
           "placeholder": "ej. DECLARATION OF PLEADINGS"

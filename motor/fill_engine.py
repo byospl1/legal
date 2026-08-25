@@ -629,24 +629,17 @@ def _juez_apellido_mayus(juez: str | None) -> str | None:
     return apellido.upper() or None
 
 
-def _persona_abreviada(nombre: str | None) -> str | None:
-    """Forma abreviada "Primer nombre + inicial del apellido" (ej. "Bruno
-    Briz" -> "Bruno B.") — se usa en la línea de firma "/S/" del
-    Certificate of Translation de written-pleadings."""
-    if not nombre:
-        return None
-    palabras = nombre.split()
-    if len(palabras) < 2:
-        return nombre
-    return f"{palabras[0]} {palabras[-1][0]}."
-
-
 def _resolve_values(case: dict, document_instance: dict) -> dict[str, str]:
     from motor.case_store import a_number_para_documento, nombre_para_documento
 
     preparador = case.get("preparador")
     values = {
         "cliente_nombre": nombre_para_documento(case),
+        # written-pleadings: el nombre del cliente cambia de forma según el
+        # lugar del documento (ver plantillas/written-pleadings/field_map.json
+        # → "_notas"). Sin riders los tres coinciden con "cliente_nombre".
+        "cliente_nombre_mayus": nombre_para_documento(case).upper(),
+        "cliente_nombre_lead_mayus": case["cliente_nombre"].upper(),
         "a_number": a_number_para_documento(case),
         "corte_sede": case["corte_sede"],
         "juez": case["juez"],
@@ -679,7 +672,7 @@ def _resolve_values(case: dict, document_instance: dict) -> dict[str, str]:
         "idioma_interprete": document_instance.get("idioma_interprete"),
         "dialecto_interprete": document_instance.get("dialecto_interprete"),
         "traductor": document_instance.get("traductor"),
-        "traductor_abreviado": _persona_abreviada(document_instance.get("traductor")),
+        "traductor_abreviado": document_instance.get("traductor_abreviado"),
         "documento_traducido": document_instance.get("documento_traducido"),
     }
     return {k: v for k, v in values.items() if v is not None}

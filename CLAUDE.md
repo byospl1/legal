@@ -143,6 +143,18 @@ tiene su sección con el detalle completo más abajo en este mismo archivo.
     — un cuadro de texto flotante puede esconder tanto texto con datos
     reales como una firma quemada que `.paragraphs` nunca muestra.** → ver
     "Plantilla `written-pleadings`".
+19. **`cliente_nombre` en `written-pleadings` no es un solo campo — son
+    tres.** Con el primer ejemplo (sin riders) los tres coincidían, así que
+    parecía un solo campo; un segundo ejemplo real CON riders reveló que
+    hace falta `cliente_nombre` (verbatim+"et al"), `cliente_nombre_mayus`
+    (MAYÚSCULAS+"ET AL") y `cliente_nombre_lead_mayus` (MAYÚSCULAS, nunca
+    "et al" — es la declaración personal de un solo respondent). **No
+    volver a asumir que un campo de nombre se comporta igual en todos los
+    lugares del documento solo porque un ejemplo sin riders no mostró
+    diferencia** — antes de dar por buena una plantilla nueva con
+    riders/pluralización, pedir o construir un caso de prueba CON riders.
+    → ver "`written-pleadings`: corregido contra un SEGUNDO ejemplo real
+    con riders".
 
 **Nota**: los fixes 13-16 (más limpieza de evidencia huérfana en
 `output/_evidencia` al arrancar y código muerto) están detallados con más
@@ -913,6 +925,60 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   apariciones de `rId7` (la firma quemada del traductor ya no está en
   ningún documento generado). También corrida la suite `tests/run_tests.py`
   completa (10/10) para confirmar que no se rompió nada de lo existente.
+
+## `written-pleadings`: corregido contra un SEGUNDO ejemplo real con riders (2026-08-25)
+
+- El primer ejemplo (Insuasti Ruiz) no tenía riders, así que no dejaba ver
+  que `cliente_nombre` necesita TRES formas distintas según el lugar del
+  documento. El usuario compartió un segundo documento real ya llenado
+  (Mendez Rodriguez, Sheraryn Mileny — caso CON riders) para comparar, y
+  confirmó la regla exacta:
+  - **`cliente_nombre`** (verbatim tal como está en el caso, + " et al" si
+    hay riders) — SOLO en el renglón superior "Attorney for Respondent(s)"
+    y en la caja de caption "In the Matter of".
+  - **`cliente_nombre_mayus`** (TODO EN MAYÚSCULAS, + " ET AL" si hay
+    riders) — en las firmas bajo el abogado, bajo cada Declaration
+    (inglés/español) y en el sello antes de "PROOF OF SERVICE".
+  - **`cliente_nombre_lead_mayus`** (SOLO el nombre del líder, MAYÚSCULAS,
+    **NUNCA** "et al" aunque haya riders) — ÚNICAMENTE en el "I, ___,"/
+    "Yo, ___," de las dos Declaration. Es una declaración personal de UNA
+    persona, nunca colectiva — por eso no lleva a los riders aunque el
+    resto del documento sí. **El ejemplo real de Sheraryn tenía "ET AL" en
+    la Declaración en español — es un error de ese documento puntual, no
+    la regla; la plantilla NO debe repetirlo** (confirmado explícitamente
+    por el usuario).
+  - Sin riders, los tres campos coinciden en valor — por eso esta
+    distinción no se notó con el primer ejemplo (Insuasti).
+  - Los 8 `<w:sdt>` de `cliente_nombre` ya estaban separados uno por
+    ocurrencia desde la cirugía original — el fix fue solo reasignar
+    `grupos_sync_manual` en `field_map.json` (qué IDs van a cuál de los
+    tres nombres) y agregar los dos derivados nuevos a
+    `fill_engine._resolve_values` (`nombre_para_documento(case).upper()` y
+    `case["cliente_nombre"].upper()`). **No hizo falta tocar el `.docx`.**
+- **`traductor_abreviado` dejó de ser un campo derivado.** Se había
+  calculado automáticamente ("Bruno Briz" → "Bruno B.", primer nombre +
+  inicial del apellido) porque solo había un ejemplo. El segundo ejemplo
+  (traductora Roxana Banks) firma "RB." (iniciales de ambos nombres, sin
+  espacio) — un formato distinto, que confirma que NO hay una regla fija:
+  cada quien abrevia su firma como quiere. Fix: `traductor_abreviado` pasó
+  a ser un `campos_extra` de texto libre (se pide junto con `traductor` en
+  cada corrida), ya no se calcula. Se borró el helper
+  `_persona_abreviada` de `fill_engine.py` (quedó sin uso).
+- **Nombre del despacho en el membrete**: se detectó que varía entre
+  documentos reales ("KOSTIV & ASSOCIATES, P.C." en Insuasti, "KOSTIV
+  CARDINAL INTERNATIONAL LAW GROUP" en Sheraryn, "Kostiv CARDINAL
+  INTERNATIONAL LAW GROUP CORP." en `webex-motion`/John Negron, cada uno
+  con teléfono distinto). Se le preguntó al usuario — **decisión: dejarlo
+  fijo como está** (el de Insuasti, "KOSTIV & ASSOCIATES, P.C."), la
+  variación entre documentos es solo cómo se tipeó cada vez, no una regla
+  real a replicar. No cambiar esto sin que el usuario lo pida.
+- Verificado con `motor.fill_engine.generar_documento` real, caso de
+  prueba CON riders (replicando el patrón de Sheraryn): los tres formatos
+  de `cliente_nombre` cayeron exactamente en los lugares correctos,
+  incluyendo que la Declaración en español NO lleva "ET AL" (a diferencia
+  del ejemplo real, que sí lo tenía por error). `traductor_abreviado`
+  libre ("RB.") se insertó tal cual. Suite `tests/run_tests.py` sigue en
+  10/10.
 
 ## Archivos que NO se deben modificar sin instrucción explícita
 
