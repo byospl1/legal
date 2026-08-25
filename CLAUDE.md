@@ -100,6 +100,33 @@ tiene su sección con el detalle completo más abajo en este mismo archivo.
     evidencia — fuerza el modo evidencia (excluye los ítems fijos sin
     archivo) aunque `evidencias` esté vacío. → ver "Bug: Biometrics
     Compliance no anexaba evidencia".
+13. **`next_tab_letra` se quedaba pegado en "AA" después de la Z.** Faltaba
+    el acarreo del incremento base-26 (Z→AA, pero de ahí AA→AA en vez de
+    AA→AB). Fix: incremento base-26 bijectivo con acarreo real, replicado
+    en `case_store.py` y `static/app.js` (`nextTabLetra`). Solo afectaba
+    casos con 27+ exhibits. → ver "Auditoría 2026-08-25".
+14. **`_ANIO_RE` de la sugerencia de año dejaba de reconocer años ≥2040.**
+    Rango original `19[9]\d|20[0-3]\d` (1990-2039). Fix: `19[89]\d|20\d\d`
+    (1980-2099). → ver "Auditoría 2026-08-25".
+15. **Errores de datos en la tabla de exhibits (país/año/fecha faltante)
+    daban 500 genérico en vez de 400 con mensaje claro.** `api_generar` solo
+    atrapaba `FillEngineError`/`ValidationError`, no el `ValueError` que
+    lanza `exhibit_builder`. Fix: `ValueError` agregado a la tupla del 400.
+    No repetir: cualquier `raise ValueError` nuevo en `exhibit_builder` para
+    validar datos de exhibits debe llegar como 400, no como 500. → ver
+    "Auditoría 2026-08-25".
+16. **Body no-JSON en `api_save_caso`/`api_generar` tiraba 500 con
+    traceback.** Fix: `request.get_json(force=True, silent=True)` +
+    chequeo `isinstance(..., dict)` → 400 "El cuerpo de la petición no es
+    JSON válido". → ver "Auditoría 2026-08-25".
+
+**Nota**: los fixes 13-16 (más limpieza de evidencia huérfana en
+`output/_evidencia` al arrancar y código muerto) están detallados con más
+contexto en "## Auditoría 2026-08-25: fixes de robustez + primera suite de
+tests" más abajo en este archivo. Esa sección también documenta qué NO se
+tocó a propósito (numeración no idempotente, alineación de Biometrics con
+wrap, condición de carrera teórica) — revisar ahí antes de "arreglar" esos
+tres puntos de nuevo.
 
 ## Plantillas registradas (`plantillas/registro.json`)
 
