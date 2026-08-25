@@ -33,8 +33,8 @@
         },
         {
           "nombre": "cargo_removibilidad",
-          "etiqueta": "Cargo(s) de removibilidad admitidos (cita INA/CFR)",
-          "placeholder": "ej. 212(a)(6)(A)(i)"
+          "etiqueta": "Cargo(s) de removibilidad admitidos (cita INA/CFR) — si hay más de uno, sepáralos con coma",
+          "placeholder": "ej. 212(a)(7)(A)(i)(I), 212(a)(6)(A)(i)"
         },
         {
           "nombre": "designacion_pais_remocion",
