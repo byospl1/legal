@@ -121,7 +121,6 @@ def combinar_portada_y_evidencia(
     for page in paginas_portada[:punto]:
         writer.add_page(page)
 
-    ultima_pagina = pagina_inicial - 1
     numero = pagina_inicial
     for evidencia_pdf in evidencias:
         try:
@@ -307,7 +306,9 @@ def combinar_portada_y_evidencia_exhibits(
 # (sugerencia editable — nunca se usa a ciegas sin que el usuario la vea).
 # ---------------------------------------------------------------------------
 
-_ANIO_RE = re.compile(r"\b(19[9]\d|20[0-3]\d)\b")
+# 1980-2099. Antes era 19[9]\d|20[0-3]\d (1990-2039), que dejaba de sugerir
+# el año de reportes de país a partir de 2040 — bug de fecha latente.
+_ANIO_RE = re.compile(r"\b(19[89]\d|20\d\d)\b")
 
 
 def _extraer_texto_primeras_paginas(pdf_path: Path, max_paginas: int = 2) -> str:

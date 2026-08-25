@@ -125,7 +125,6 @@ def _build_leaf_replacement(sdt: Sdt, value: str) -> str:
 
 def _apply_field_values(document_xml: str, field_map: dict, values: dict[str, str]) -> str:
     top_level = extract_top_level_sdts(document_xml)
-    by_id = {s.id: s for s in top_level}
 
     # id -> nombre de campo a escribir (o None si no aplica en este run)
     id_to_name: dict[str, str] = {}

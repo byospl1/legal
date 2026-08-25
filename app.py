@@ -165,7 +165,9 @@ def api_get_caso(case_id: str):
 
 @app.post("/api/casos")
 def api_save_caso():
-    case = request.get_json(force=True)
+    case = request.get_json(force=True, silent=True)
+    if not isinstance(case, dict):
+        return jsonify({"error": "El cuerpo de la petición no es JSON válido"}), 400
     required = ["cliente_nombre", "a_number", "corte_sede", "juez", "proxima_audiencia", "abogado", "preparador"]
     faltantes = [campo for campo in required if not case.get(campo)]
     if faltantes:
@@ -381,7 +383,9 @@ def _es_plantilla_pdf_form(template_id: str | None) -> bool:
 
 @app.post("/api/generar")
 def api_generar():
-    body = request.get_json(force=True)
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "El cuerpo de la petición no es JSON válido"}), 400
     case_id = body.get("case_id")
     document_instance = body.get("document_instance")
     separar_por_tab = body.get("separar_por_tab", True)
@@ -462,7 +466,12 @@ def api_generar():
             separar_por_tab=separar_por_tab,
             verificar_pdf=generar_pdf,
         )
-    except (FillEngineError, ValidationError) as e:
+    except (FillEngineError, ValidationError, ValueError) as e:
+        # ValueError lo lanza motor.exhibit_builder cuando falta un dato
+        # requerido de la tabla de exhibits (país, año de Country Reports/
+        # OSAC, fecha de Biometrics Compliance) — es un error de datos del
+        # usuario, no un fallo interno, así que se devuelve como 400 con su
+        # mensaje en vez de un 500 opaco.
         return jsonify({"error": str(e)}), 400
     except Exception as e:  # noqa: BLE001
         traceback.print_exc()
@@ -552,9 +561,28 @@ def descargar_output(filename: str):
     return send_file(target)
 
 
+def _limpiar_evidencia_huerfana() -> None:
+    """Borra los PDFs de evidencia subidos en sesiones ANTERIORES del
+    servidor. Al arrancar un proceso nuevo, el índice en memoria
+    `_EVIDENCIAS` está vacío, así que cualquier archivo que haya quedado en
+    EVIDENCIA_DIR de una corrida previa ya es inalcanzable (no hay id que lo
+    referencie) y solo ocupa disco — se acumulaban sin límite. NO toca los
+    entregables de `output/` (esos son los .docx/.pdf finales que el usuario
+    puede no haber descargado todavía)."""
+    if not EVIDENCIA_DIR.exists():
+        return
+    for f in EVIDENCIA_DIR.glob("*"):
+        if f.is_file():
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
+
 if __name__ == "__main__":
     import webbrowser
     from threading import Timer
 
+    _limpiar_evidencia_huerfana()
     Timer(1.0, lambda: webbrowser.open("http://127.0.0.1:5000")).start()
     app.run(host="127.0.0.1", port=5000, debug=False)

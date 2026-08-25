@@ -84,11 +84,23 @@ def a_number_para_documento(case: dict) -> str:
 
 
 def next_tab_letra(ultimo: str | None) -> str:
+    """Siguiente etiqueta de Tab en base-26 biyectiva (estilo columnas de
+    Excel): A..Z, luego AA, AB, ... AZ, BA, ... ZZ, AAA. Antes solo sabía
+    llegar hasta "AA" (Z->AA) y de ahí se quedaba pegado devolviendo la misma
+    letra — se rompía en casos con 27+ exhibits."""
     if not ultimo:
         return "A"
     ultimo = ultimo.strip().upper()
-    if len(ultimo) == 1 and "A" <= ultimo < "Z":
-        return chr(ord(ultimo) + 1)
-    if ultimo == "Z":
-        return "AA"
-    return ultimo
+    if not ultimo or any(c < "A" or c > "Z" for c in ultimo):
+        return "A"
+    # incrementa como un número base-26 con "acarreo": la última letra sube;
+    # si era Z pasa a A y se acarrea a la anterior, etc.
+    letras = list(ultimo)
+    i = len(letras) - 1
+    while i >= 0:
+        if letras[i] != "Z":
+            letras[i] = chr(ord(letras[i]) + 1)
+            return "".join(letras)
+        letras[i] = "A"
+        i -= 1
+    return "A" + "".join(letras)

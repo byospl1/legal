@@ -995,12 +995,29 @@ function recalcularPaginas() {
   }
 }
 
+/** Siguiente letra en base-26 biyectiva (A..Z, AA, AB..) — igual que
+ * case_store.next_tab_letra en el backend, para que no se quede pegada tras
+ * la "Z" en casos con muchos exhibits. */
+function nextTabLetra(ultimo) {
+  const s = (ultimo || "").trim().toUpperCase();
+  if (!s || !/^[A-Z]+$/.test(s)) return "A";
+  const letras = s.split("");
+  let i = letras.length - 1;
+  while (i >= 0) {
+    if (letras[i] !== "Z") {
+      letras[i] = String.fromCharCode(letras[i].charCodeAt(0) + 1);
+      return letras.join("");
+    }
+    letras[i] = "A";
+    i -= 1;
+  }
+  return "A" + letras.join("");
+}
+
 function nextLetterFromLastRow() {
   const rows = $("#tabsList").querySelectorAll(".tab-card .tab-letra");
   if (!rows.length) return "A";
-  const last = rows[rows.length - 1].value.trim().toUpperCase();
-  if (last.length === 1 && last >= "A" && last < "Z") return String.fromCharCode(last.charCodeAt(0) + 1);
-  return "";
+  return nextTabLetra(rows[rows.length - 1].value);
 }
 
 function collectExhibits() {

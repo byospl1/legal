@@ -795,3 +795,68 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   tab letra, etc.
 - `static/index.html` + `static/app.js` — UI de una sola página, sin
   framework ni build step.
+
+## Auditoría 2026-08-25: fixes de robustez + primera suite de tests
+
+Auditoría completa a pedido del usuario ("hazle una auditoría... corrige
+todo"). No se tocó layout de plantillas ni comportamiento de documentos; son
+correcciones de robustez, código muerto y una suite de tests. Lo corregido:
+
+- **`case_store.next_tab_letra` — incremento base-26 biyectivo.** Antes solo
+  llegaba a "AA" (Z→AA) y de ahí se quedaba pegado (AA→AA). Ahora incrementa
+  con acarreo: A..Z, AA, AB, ... AZ, BA, ... ZZ, AAA. Se replicó la misma
+  lógica en `static/app.js` (`nextTabLetra`, usada por
+  `nextLetterFromLastRow`) para que frontend y backend coincidan. Solo
+  afectaba casos con 27+ exhibits.
+- **`pdf_merge._ANIO_RE` — rango de años de la sugerencia.** Era
+  `19[9]\d|20[0-3]\d` (1990-2039), dejaba de sugerir el año de reportes de
+  país a partir de 2040. Ahora `19[89]\d|20\d\d` (1980-2099).
+- **`app.py` — errores de datos de la tabla de exhibits ahora dan 400, no
+  500.** `motor.exhibit_builder` lanza `ValueError` cuando falta país / año
+  de Country Reports u OSAC / fecha de Biometrics Compliance. `api_generar`
+  no lo atrapaba (solo `FillEngineError`/`ValidationError`) y caía al
+  `except Exception` genérico → 500 "Error inesperado" sin pista. Se agregó
+  `ValueError` a la tupla del 400, así el mensaje claro del builder llega al
+  usuario. (Cubre también la trampa latente del default
+  `_biometricos_por_defecto` con `fecha=None`: si alguna vez llega, ahora es
+  un 400 legible en vez de un 500.)
+- **`app.py` — `request.get_json(force=True)` sin body válido.** En
+  `api_save_caso` y `api_generar` un body vacío/no-JSON hacía `None.get(...)`
+  → 500 con traceback. Ahora `force=True, silent=True` + chequeo `isinstance
+  dict` → 400 "El cuerpo de la petición no es JSON válido".
+- **`app.py` — limpieza de evidencia huérfana al arrancar.** Los PDFs subidos
+  viven en `output/_evidencia` indexados SOLO en memoria (`_EVIDENCIAS`).
+  Tras reiniciar el servidor ese índice queda vacío, así que los archivos
+  viejos son inalcanzables y solo ocupaban disco (se acumulaban sin límite).
+  `_limpiar_evidencia_huerfana()` los borra en el bloque `if __name__ ==
+  "__main__"` (NO al importar — los tests importan `app` sin borrar nada).
+  **Nunca toca `output/` (los .docx/.pdf finales son entregables que el
+  usuario puede no haber descargado todavía).**
+- **Código muerto**: `by_id` sin usar en `fill_engine._apply_field_values`;
+  doble asignación de `ultima_pagina` en `pdf_merge.combinar_portada_y_evidencia`.
+- **Primera suite de tests: `tests/run_tests.py`.** Sin pytest (el entorno
+  del despacho solo tiene requirements.txt) — se corre con `python3
+  tests/run_tests.py`, sale con código ≠0 si algo falla. Cubre la clase de
+  bug que ya se repitió varias veces: invariante de conteo de párrafos
+  DESCRIPTION==PAGES en modo evidencia (fee+biometrics, biometrics-solo,
+  country_conditions parcial, form_of_identity, supplemental, multi-
+  categoría), subtítulo de Biometrics repetido por persona, fecha
+  obligatoria, `next_tab_letra` base-26, y el rango de `_ANIO_RE`. 10 tests,
+  todos en verde. **Correr esta suite antes de commitear cambios a
+  `exhibit_builder`/`case_store`/`pdf_merge` — es la red que faltaba.**
+
+### Puntos de la auditoría que NO se cambiaron (a propósito)
+
+- **Numeración de páginas no idempotente.** Regenerar un Tab vuelve a avanzar
+  `case["siguiente_pagina"]`. NO se cambió: es parte del diseño de
+  "paginación continua por caso", y alterar cómo persisten los números de
+  página es comportamiento que afecta el documento — el usuario controla
+  "página inicial del lote" a mano y el frontend re-lee `siguiente_pagina`
+  tras generar. Cambiarlo requeriría una decisión de producto explícita, no
+  es un bug.
+- **Alineación de Biometrics cuando un renglón envuelve a 2 líneas visuales.**
+  Ya documentado arriba como no verificable en este sandbox (LibreOffice
+  roto). No es corregible a ciegas por estructura XML.
+- **Estado global + Flask multihilo.** Condición de carrera solo teórica con
+  dos pestañas simultáneas; es una herramienta local monousuario. Un lock
+  agregaría complejidad para ~cero beneficio real. Se deja anotado.
