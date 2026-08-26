@@ -348,10 +348,20 @@ def _supplemental_evidence_en_modo_evidencia(documentos: list[dict], declaracion
 def _build_supplemental_evidence_description(
     documentos: list[dict], plural: bool, declaraciones: list[dict] | None = None
 ) -> str:
+    """Un `spacer` (párrafo vacío) entre cada documento incluido — igual que
+    entre categorías distintas de la tabla y que entre personas de
+    Biometrics Compliance (ver su docstring). Necesario porque el texto de
+    cada declaración/documento es largo y casi siempre envuelve a 2+ líneas
+    visuales en Word: sin un separador, la columna PAGES (ver
+    _build_supplemental_evidence_pages) se desalinea a partir del segundo
+    documento — el "Pgs. X-Y" del segundo caía junto a la línea envuelta del
+    primero en vez de junto a su propio renglón (reportado por el usuario
+    2026-08-26 con captura de Tab D: líder + 1 rider)."""
     declaraciones = declaraciones if declaraciones is not None else _declaraciones_por_defecto()
     modo_evidencia = _supplemental_evidence_en_modo_evidencia(documentos, declaraciones)
     item_tpl = _load("item_declaration")
-    lineas = []
+    spacer = _load("spacer")
+    bloques = []
     for decl in declaraciones:
         if modo_evidencia and not (decl.get("evidencia") or decl.get("evidencia_id")):
             continue
@@ -359,22 +369,26 @@ def _build_supplemental_evidence_description(
         # Las declaraciones ya distinguen por persona ("Respondent's" vs
         # "Rider's {NOMBRE}") igual que Form of Identity/Biometrics — no se
         # pluralizan aunque el Tab sea plural, mismo criterio que esas dos.
-        lineas.append(_set_first_t_text(item_tpl, texto))
+        bloques.append(_set_first_t_text(item_tpl, texto))
     for doc in documentos:
         texto = _supplemental_evidence_line_text(doc.get("tipo"), doc.get("titulo"))
         linea = _set_first_t_text(item_tpl, texto)
         if plural:
             linea = pluralizar_respondent(linea)
-        lineas.append(linea)
-    return "".join(lineas)
+        bloques.append(linea)
+    return spacer.join(bloques)
 
 
 def _build_supplemental_evidence_pages(documentos: list[dict], declaraciones: list[dict] | None = None) -> str:
+    """Debe seguir el mismo conteo de párrafos que
+    _build_supplemental_evidence_description, incluyendo el `blank` que
+    corresponde al `spacer` entre documentos (ver su docstring) — de lo
+    contrario las dos columnas se desalinean."""
     declaraciones = declaraciones if declaraciones is not None else _declaraciones_por_defecto()
     modo_evidencia = _supplemental_evidence_en_modo_evidencia(documentos, declaraciones)
     pages_value_tpl = _load("pages_value")
     blank = _set_first_t_text(pages_value_tpl, "")
-    lineas = []
+    bloques = []
     for decl in declaraciones:
         if modo_evidencia and not (decl.get("evidencia") or decl.get("evidencia_id")):
             continue
@@ -383,19 +397,19 @@ def _build_supplemental_evidence_pages(documentos: list[dict], declaraciones: li
             inicio = info["pagina_inicio"]
             fin = inicio + info["num_paginas"] - 1
             texto = f"Pgs. {inicio}" if inicio == fin else f"Pgs. {inicio}-{fin}"
-            lineas.append(_set_first_t_text(pages_value_tpl, texto))
+            bloques.append(_set_first_t_text(pages_value_tpl, texto))
         else:
-            lineas.append(blank)
+            bloques.append(blank)
     for doc in documentos:
         info = doc.get("evidencia")
         if info and info.get("pagina_inicio") and info.get("num_paginas"):
             inicio = info["pagina_inicio"]
             fin = inicio + info["num_paginas"] - 1
             texto = f"Pgs. {inicio}" if inicio == fin else f"Pgs. {inicio}-{fin}"
-            lineas.append(_set_first_t_text(pages_value_tpl, texto))
+            bloques.append(_set_first_t_text(pages_value_tpl, texto))
         else:
-            lineas.append(blank)
-    return "".join(lineas)
+            bloques.append(blank)
+    return blank.join(bloques)
 
 
 def _documentos_se_por_defecto() -> list[dict]:
