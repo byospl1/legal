@@ -164,22 +164,22 @@ tiene su sección con el detalle completo más abajo en este mismo archivo.
     riders/pluralización, pedir o construir un caso de prueba CON riders.
     → ver "`written-pleadings`: corregido contra un SEGUNDO ejemplo real
     con riders".
-20. **"Pgs." de la 2da persona en Supplemental Evidence caía junto a la
-    línea envuelta de la 1ra.** `_build_supplemental_evidence_description`/
-    `_pages` concatenaban declaraciones/documentos sin ningún `spacer`
-    entre ellos (a diferencia de Biometrics Compliance, que ya tenía este
-    separador). Con el texto fijo del líder ocupando 2 líneas visuales en
-    Word, el "Pgs." del segundo documento aparecía junto a la 2da línea
-    envuelta del primero, no junto a su propio renglón — confirmado con
-    captura real del usuario. Fix: mismo `spacer`/`blank` que ya separa
-    categorías y personas de Biometrics, ahora también entre cada documento
-    de esta sección. **Si se agrega una sección nueva con texto largo por
-    persona/documento (candidato a envolver a 2+ líneas), replicar este
-    `spacer` entre entradas desde el principio** — no esperar a que se
-    reporte el desalineamiento. → ver "Ajuste (mismo día): 'Pgs.' de la 2da
-    persona caía junto a la línea envuelta de la 1ra — bug real, confirmado
-    con captura", dentro de "Supplemental Evidence: Declaration pasó a ser
-    1 documento por rider".
+20. **"Pgs." de la 2da persona en Supplemental Evidence caía en la línea
+    envuelta de la 1ra.** El texto fijo del líder envuelve a 2 líneas
+    visuales en Word, pero PAGES reservaba 1 solo párrafo para él → el
+    "Pgs." del 2do documento aparecía junto a la 2da línea envuelta del
+    1ro (Word alinea celdas por altura acumulada, no por conteo de
+    párrafos). Confirmado con captura real. **Un primer intento con un
+    `spacer` fijo entre documentos se REVIRTIÓ** (metía una línea en blanco
+    visible no deseada y 1 línea de compensación no alcanza para 2 de
+    envolvimiento). Fix correcto: `_estimar_lineas_visuales(texto)` (métricas
+    Times-Roman de reportlab vs. ancho real de la celda) + en PAGES poner el
+    valor seguido de `(líneas-1)` párrafos `blank`; DESCRIPTION queda sin
+    separadores. **No arreglar este tipo de desalineamiento con un separador
+    fijo — usar la estimación de líneas, que es proporcional al
+    envolvimiento real.** → ver "Ajuste (2026-08-26): 'Pgs.' de la 2da
+    persona caía en la línea envuelta de la 1ra — resuelto estimando líneas
+    visuales (NO con spacer)".
 
 **Nota**: los fixes 13-16 (más limpieza de evidencia huérfana en
 `output/_evidencia` al arrancar y código muerto) están detallados con más
@@ -1052,59 +1052,91 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   profundo de lo que esta auditoría pudo alcanzar por código; pedir el
   `evidencia_error` exacto del response de `/api/generar` para ese caso.
 
-### Ajuste (mismo día): "Pgs." de la 2da persona caía junto a la línea envuelta de la 1ra — bug real, confirmado con captura
+### Ajuste (2026-08-26): "Pgs." de la 2da persona caía en la línea envuelta de la 1ra — resuelto estimando líneas visuales (NO con spacer)
 
 - El usuario mandó captura real de la tabla TABLE OF CONTENTS, Tab D
   (Supplemental Evidence, líder + 1 rider, ambos con declaración): el texto
   "Respondent's Declaration for Support of Asylum Withholding of Removal and
-  Relief Under CAT." (texto fijo, siempre envuelve a 2 líneas visuales en
+  Relief Under CAT." (texto FIJO, siempre envuelve a 2 líneas visuales en
   Word) mostraba "Pgs. 46-52" bien alineado con su primera línea, pero
   "Pgs. 53-59" (el rango del rider) caía junto a "of Removal and Relief
   Under CAT." — la SEGUNDA línea envuelta de la declaración del líder — en
   vez de junto a "Rider's MORALES-ZUNIGA, YORLENY SARAHI", la primera línea
-  del renglón del rider. Mismo mecanismo de fondo ya documentado para
-  Biometrics Compliance (Word alinea columnas de tabla por altura
-  acumulada, no por conteo de párrafos), pero acá el bug SÍ se pudo
-  confirmar con una captura real — a diferencia del reporte anterior de
-  "documento sin los adjuntos" (ítem previo de esta sección), que no se
-  pudo confirmar por el LibreOffice roto del sandbox. Este es un problema
-  de estructura XML pura (conteo de párrafos), no de render — sí se pudo
-  diagnosticar y corregir con certeza sin necesitar LibreOffice.
-- **Causa**: a diferencia de Biometrics Compliance (que ya tenía un
-  `spacer` entre el bloque de cada persona), `_build_supplemental_evidence_description`/
-  `_build_supplemental_evidence_pages` concatenaban los documentos
-  (declaraciones + `documentos_se`) sin ningún separador entre ellos — el
-  segundo documento empezaba inmediatamente después del último párrafo XML
-  del primero, sin dar margen para que la primera declaración (texto largo,
-  2 líneas visuales) "gastara" un párrafo extra de PAGES que compensara el
-  envolvimiento.
-- **Fix en `motor/exhibit_builder.py`**: mismo `spacer`/`blank` que ya se
-  usa entre categorías y entre personas de Biometrics, ahora también entre
-  CADA documento de "supplemental_evidence" (declaraciones y
-  `documentos_se` combinados, en el mismo orden en que ya se emitían) —
-  `spacer.join(bloques)` en DESCRIPTION, `blank.join(bloques)` en PAGES.
-  Con el líder ocupando exactamente 2 líneas visuales (texto fijo, siempre
-  el mismo), el spacer intercalado hace que el "Pgs." del documento
-  siguiente caiga en el índice de párrafo correcto — confirmado con el
-  caso exacto de la captura (test nuevo,
-  `test_declaraciones_pgs_alineado_con_su_propio_parrafo` en
-  `tests/run_tests.py`, que verifica por ÍNDICE de párrafo, no solo por
-  conteo total, que "Pgs. 46-52" cae en el párrafo del líder y "Pgs. 53-59"
-  en el del rider).
-- **Sigue aplicando la misma limitación que Biometrics**: esto NO garantiza
-  matemáticamente la alineación exacta si un documento envuelve a MÁS de 2
-  líneas visuales (ej. un rider con nombre muy largo, o un título de News
-  largo) — el spacer solo "resetea" la alineación entre documentos
-  consecutivos asumiendo que el anterior ocupó el número de líneas para el
-  que se calibró (2). Si el próximo reporte muestra un desalineamiento con
-  un nombre/título particularmente largo, es la misma clase de problema y
-  necesita el mismo tipo de ajuste dirigido (no un cambio genérico a
-  ciegas).
-- Tests actualizados: `test_declaraciones_por_rider` y
-  `test_declaraciones_multi_tipo_por_persona` esperaban conteo de párrafos
-  == cantidad de documentos (3); con el spacer intercalado ahora son
-  `2N-1` (5 para 3 documentos) — ambos tests actualizados para reflejarlo,
-  con comentario explicando por qué. Suite completa en 15/15.
+  del renglón del rider. Es exactamente el mecanismo ya documentado para
+  Biometrics Compliance (Word alinea las celdas de una fila por altura
+  acumulada real, no por conteo de párrafos): un renglón de DESCRIPTION que
+  envuelve a N líneas necesita N párrafos de altura en PAGES, no 1.
+- **PRIMER INTENTO — spacer entre documentos, REVERTIDO (no repetir).** Se
+  metió un `spacer`/`blank` (párrafo vacío) entre cada documento en ambas
+  columnas (`spacer.join`/`blank.join`). El usuario mandó una SEGUNDA
+  captura: (1) el spacer agregaba una línea en blanco VISIBLE entre los dos
+  documentos en DESCRIPTION que él no quería, y (2) el "Pgs." del rider
+  seguía desalineado — 1 spacer aporta 1 línea de compensación, pero el
+  líder envuelve a 2 líneas (necesita 1 línea EXTRA de compensación, no una
+  línea separadora). Un separador fijo de 1 párrafo no modela el
+  envolvimiento variable de cada texto. **No volver a intentar arreglar
+  esto con un separador fijo entre documentos.**
+- **FIX CORRECTO (el que quedó)**: estimar cuántas líneas visuales envuelve
+  el texto de CADA documento y, en PAGES, poner el valor ("Pgs. X-Y") del
+  documento SEGUIDO de `(líneas_visuales - 1)` párrafos `blank` de relleno —
+  DESCRIPTION queda igual que siempre (1 párrafo por documento, SIN
+  separadores, documentos consecutivos como pidió el usuario). Así el valor
+  de cada documento cae en la primera línea de su renglón y el del siguiente
+  en la primera del suyo, sin desfase.
+  - Nuevo `_estimar_lineas_visuales(texto)` en `motor/exhibit_builder.py`:
+    simula el corte de línea greedy de Word usando las métricas Times-Roman
+    de **reportlab** (`pdfmetrics.stringWidth`, misma dependencia que ya usa
+    `pdf_merge` — no agrega dependencias nuevas), contra el ancho útil de la
+    celda DESCRIPTION `_DESC_CELL_ANCHO_UTIL_PTS` (columna 6300 twips menos
+    108 twips de margen de celda por lado = 6084 twips ≈ 304.2pt). Si
+    reportlab no estuviera disponible, degrada a 1 línea (comportamiento
+    viejo sin compensación, nunca rompe la generación).
+  - **Calibrado contra la captura real**: con ese ancho, el estimador da
+    exactamente 2 líneas para el texto del líder (cortando en "...Asylum
+    Withholding" / "of Removal...") y 3 para el renglón del rider
+    MORALES-ZUNIGA (cortando en "...SARAHI" / "...of Removal" / "and Relief
+    Under CAT.") — idéntico a lo que muestra la captura de Word. Resultado
+    para ese caso: PAGES = [`Pgs. 46-52`, blank, `Pgs. 53-59`, blank, blank]
+    → "Pgs. 46-52" en línea visual 1 (junto al líder), "Pgs. 53-59" en línea
+    3 (junto a la 1ra línea del rider).
+  - Nuevo helper compartido `_supplemental_evidence_items(documentos,
+    plural, declaraciones)` que arma la lista ordenada de documentos
+    incluidos con su texto final + evidencia — DESCRIPTION y PAGES lo
+    consumen para NUNCA divergir en qué documentos incluyen, en qué orden,
+    ni con qué texto (el texto es lo que PAGES usa para estimar el
+    envolvimiento). `build_pages_cell_content` ganó un parámetro `plural`
+    (antes no lo recibía) para que el texto de los `documentos_se`
+    pluralizados coincida con el de DESCRIPTION al estimar — se pasa desde
+    `build_exhibit_table`.
+- **Por qué este enfoque SÍ generaliza y el spacer no**: acá la
+  compensación es proporcional al envolvimiento real de CADA texto (2
+  líneas → 1 blank extra, 3 líneas → 2 blanks extra, etc.), estimado por
+  ancho real — no un separador fijo que asume un número de líneas. Un
+  nombre de rider o título de News más largo que envuelva a 4 líneas queda
+  compensado igual, sin tocar nada. **La misma técnica es aplicable a
+  Biometrics Compliance** (que hoy sigue con el enfoque viejo de 1 párrafo
+  por persona + subtítulo repetido, con la misma limitación sin resolver
+  anotada en su sección) — **pero NO se tocó Biometrics** porque el usuario
+  no reportó que esté mal; si lo reporta, reusar `_estimar_lineas_visuales`
+  ahí con el mismo patrón (valor + `(líneas-1)` blanks por renglón), no
+  reinventar.
+- **Limitación que se mantiene**: `_estimar_lineas_visuales` es una
+  ESTIMACIÓN de métricas de fuente — no se pudo verificar el render real en
+  este sandbox (LibreOffice roto). Se calibró para reproducir exactamente la
+  captura real que mandó el usuario, y es estable ante pequeñas variaciones
+  del ancho asumido (108-120 twips de margen dan el mismo conteo), pero si
+  un texto muy particular sigue desalineado en Word real, ajustar con ese
+  caso concreto (revisar el margen de celda real o el ancho de columna), no
+  a ciegas.
+- Tests (`tests/run_tests.py`): el viejo invariante "DESCRIPTION y PAGES con
+  igual número de párrafos" ya NO aplica a supplemental_evidence (PAGES
+  ahora tiene más párrafos: los blanks de compensación). Se reemplazó por
+  `_assert_supplemental_alineado`, que verifica la invariante REAL — cada
+  "Pgs." cae en una línea visual donde EMPIEZA un renglón de DESCRIPTION,
+  nunca en una línea envuelta — modelando la altura acumulada con
+  `_estimar_lineas_visuales`. `test_declaraciones_pgs_alineado_con_su_propio_parrafo`
+  fija además la estructura exacta esperada para el caso de la captura
+  (`["Pgs. 46-52", "", "Pgs. 53-59", "", ""]`). Suite en 15/15.
 
 ## Form of Identity: ahora permite más de un documento por persona (2026-08-26)
 

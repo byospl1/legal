@@ -345,71 +345,135 @@ def _supplemental_evidence_en_modo_evidencia(documentos: list[dict], declaracion
     return any(d.get("evidencia") or d.get("evidencia_id") for d in declaraciones)
 
 
-def _build_supplemental_evidence_description(
-    documentos: list[dict], plural: bool, declaraciones: list[dict] | None = None
-) -> str:
-    """Un `spacer` (párrafo vacío) entre cada documento incluido — igual que
-    entre categorías distintas de la tabla y que entre personas de
-    Biometrics Compliance (ver su docstring). Necesario porque el texto de
-    cada declaración/documento es largo y casi siempre envuelve a 2+ líneas
-    visuales en Word: sin un separador, la columna PAGES (ver
-    _build_supplemental_evidence_pages) se desalinea a partir del segundo
-    documento — el "Pgs. X-Y" del segundo caía junto a la línea envuelta del
-    primero en vez de junto a su propio renglón (reportado por el usuario
-    2026-08-26 con captura de Tab D: líder + 1 rider)."""
-    declaraciones = declaraciones if declaraciones is not None else _declaraciones_por_defecto()
+# Ancho útil de la celda DESCRIPTION: columna de 6300 twips (ver tblGrid en
+# el fragmento tbl_open.xml) menos los márgenes de celda por defecto de Word
+# (108 twips por lado, no hay tblCellMar propio en la plantilla), convertido
+# a puntos. Se usa para estimar a cuántas líneas visuales envuelve un texto.
+_DESC_CELL_ANCHO_UTIL_PTS = (6300 - 2 * 108) / 1440 * 72  # ≈ 304.2 pt
+
+
+def _estimar_lineas_visuales(texto: str) -> int:
+    """Estima a cuántas líneas visuales envuelve `texto` dentro de la celda
+    DESCRIPTION (Times New Roman 12pt, ancho _DESC_CELL_ANCHO_UTIL_PTS),
+    simulando el corte de línea greedy de Word (nunca parte una palabra a la
+    mitad). Se usa para reservar en la columna PAGES un párrafo `blank`
+    extra por cada línea de MÁS que ocupe un documento en DESCRIPTION, de
+    modo que el "Pgs. X-Y" del documento SIGUIENTE caiga junto a su propio
+    renglón y no junto a una línea envuelta del anterior — Word alinea las
+    celdas de una fila por altura acumulada real, no por conteo de párrafos.
+
+    Usa las métricas Times-Roman de reportlab (misma dependencia que ya usa
+    pdf_merge). Calibrado contra capturas reales del usuario: reproduce
+    exactamente el corte de "Respondent's Declaration for Support of Asylum
+    Withholding of Removal and Relief Under CAT." (2 líneas) y de un renglón
+    de rider con nombre largo (3 líneas). Si reportlab no está disponible,
+    degrada a 1 línea (el mismo comportamiento sin compensación que había
+    antes — no rompe la generación).
+
+    IMPORTANTE: es una ESTIMACIÓN. No se puede verificar el render real de
+    Word en este entorno (LibreOffice roto, ver CLAUDE.md) — si un texto muy
+    particular (nombre/título larguísimo) sigue desalineado en Word real,
+    hay que ajustar con el caso concreto, no a ciegas."""
+    try:
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+    except Exception:
+        return 1
+    palabras = texto.split()
+    if not palabras:
+        return 1
+    lineas = 1
+    actual = ""
+    for palabra in palabras:
+        candidato = palabra if not actual else actual + " " + palabra
+        try:
+            ancho = stringWidth(candidato, "Times-Roman", 12)
+        except Exception:
+            return max(lineas, 1)
+        if ancho <= _DESC_CELL_ANCHO_UTIL_PTS:
+            actual = candidato
+        else:
+            lineas += 1
+            actual = palabra
+    return lineas
+
+
+def _supplemental_evidence_items(
+    documentos: list[dict], plural: bool, declaraciones: list[dict]
+) -> list[dict]:
+    """Lista ordenada de los documentos INCLUIDOS de "supplemental_evidence"
+    — primero las declaraciones por persona (omitiendo a quien no tenga su
+    propio archivo cuando la categoría está en modo evidencia), después los
+    documentos libres de `documentos_se`. Cada entrada:
+    {"texto": <texto final tal como se muestra>, "evidencia": <dict|None>}.
+    DESCRIPTION y PAGES la consumen para no divergir NUNCA en qué documentos
+    incluyen, en qué orden, ni con qué texto (el texto es lo que PAGES usa
+    para estimar cuántas líneas visuales ocupa cada documento)."""
     modo_evidencia = _supplemental_evidence_en_modo_evidencia(documentos, declaraciones)
-    item_tpl = _load("item_declaration")
-    spacer = _load("spacer")
-    bloques = []
+    items: list[dict] = []
     for decl in declaraciones:
         if modo_evidencia and not (decl.get("evidencia") or decl.get("evidencia_id")):
             continue
-        texto = _declaration_line_text(decl.get("persona_nombre"), decl.get("tipo"), decl.get("titulo"))
         # Las declaraciones ya distinguen por persona ("Respondent's" vs
         # "Rider's {NOMBRE}") igual que Form of Identity/Biometrics — no se
         # pluralizan aunque el Tab sea plural, mismo criterio que esas dos.
-        bloques.append(_set_first_t_text(item_tpl, texto))
+        texto = _declaration_line_text(decl.get("persona_nombre"), decl.get("tipo"), decl.get("titulo"))
+        items.append({"texto": texto, "evidencia": decl.get("evidencia")})
     for doc in documentos:
         texto = _supplemental_evidence_line_text(doc.get("tipo"), doc.get("titulo"))
-        linea = _set_first_t_text(item_tpl, texto)
         if plural:
-            linea = pluralizar_respondent(linea)
-        bloques.append(linea)
-    return spacer.join(bloques)
+            # Mismo efecto que aplicar pluralizar_respondent al XML (solo
+            # toca el texto visible), pero sobre el texto plano — así el
+            # texto que estima PAGES coincide con lo que renderiza
+            # DESCRIPTION.
+            texto = texto.replace("Respondent’s ", "Respondents’ ").replace("Respondent´s ", "Respondents´ ")
+        items.append({"texto": texto, "evidencia": doc.get("evidencia")})
+    return items
 
 
-def _build_supplemental_evidence_pages(documentos: list[dict], declaraciones: list[dict] | None = None) -> str:
-    """Debe seguir el mismo conteo de párrafos que
-    _build_supplemental_evidence_description, incluyendo el `blank` que
-    corresponde al `spacer` entre documentos (ver su docstring) — de lo
-    contrario las dos columnas se desalinean."""
+def _rango_pgs(info: dict | None) -> str | None:
+    if info and info.get("pagina_inicio") and info.get("num_paginas"):
+        inicio = info["pagina_inicio"]
+        fin = inicio + info["num_paginas"] - 1
+        return f"Pgs. {inicio}" if inicio == fin else f"Pgs. {inicio}-{fin}"
+    return None
+
+
+def _build_supplemental_evidence_description(
+    documentos: list[dict], plural: bool, declaraciones: list[dict] | None = None
+) -> str:
+    """Un párrafo por documento, SIN separadores entre ellos (los documentos
+    van directamente consecutivos, como pidió el usuario). El texto de cada
+    documento puede envolver a varias líneas visuales en Word — la columna
+    PAGES (ver _build_supplemental_evidence_pages) compensa ese envolvimiento
+    con párrafos `blank` extra, en vez de meter un párrafo vacío visible acá
+    (lo que agregaría una línea en blanco no deseada entre documentos)."""
     declaraciones = declaraciones if declaraciones is not None else _declaraciones_por_defecto()
-    modo_evidencia = _supplemental_evidence_en_modo_evidencia(documentos, declaraciones)
+    item_tpl = _load("item_declaration")
+    items = _supplemental_evidence_items(documentos, plural, declaraciones)
+    return "".join(_set_first_t_text(item_tpl, it["texto"]) for it in items)
+
+
+def _build_supplemental_evidence_pages(
+    documentos: list[dict], declaraciones: list[dict] | None = None, plural: bool = False
+) -> str:
+    """Por cada documento incluido: su párrafo de valor ("Pgs. X-Y" o
+    `blank` si no tiene evidencia) SEGUIDO de tantos párrafos `blank` como
+    líneas visuales de MÁS ocupe ese documento en DESCRIPTION (ver
+    _estimar_lineas_visuales). Así el valor del documento cae en la primera
+    línea de su renglón y el valor del SIGUIENTE cae en la primera línea del
+    suyo, sin desfase por el envolvimiento del anterior. No hay `blank`
+    separador entre documentos (no lo hay tampoco en DESCRIPTION)."""
+    declaraciones = declaraciones if declaraciones is not None else _declaraciones_por_defecto()
+    items = _supplemental_evidence_items(documentos, plural, declaraciones)
     pages_value_tpl = _load("pages_value")
     blank = _set_first_t_text(pages_value_tpl, "")
-    bloques = []
-    for decl in declaraciones:
-        if modo_evidencia and not (decl.get("evidencia") or decl.get("evidencia_id")):
-            continue
-        info = decl.get("evidencia")
-        if info and info.get("pagina_inicio") and info.get("num_paginas"):
-            inicio = info["pagina_inicio"]
-            fin = inicio + info["num_paginas"] - 1
-            texto = f"Pgs. {inicio}" if inicio == fin else f"Pgs. {inicio}-{fin}"
-            bloques.append(_set_first_t_text(pages_value_tpl, texto))
-        else:
-            bloques.append(blank)
-    for doc in documentos:
-        info = doc.get("evidencia")
-        if info and info.get("pagina_inicio") and info.get("num_paginas"):
-            inicio = info["pagina_inicio"]
-            fin = inicio + info["num_paginas"] - 1
-            texto = f"Pgs. {inicio}" if inicio == fin else f"Pgs. {inicio}-{fin}"
-            bloques.append(_set_first_t_text(pages_value_tpl, texto))
-        else:
-            bloques.append(blank)
-    return blank.join(bloques)
+    partes = []
+    for it in items:
+        rango = _rango_pgs(it.get("evidencia"))
+        partes.append(_set_first_t_text(pages_value_tpl, rango) if rango else blank)
+        extra = _estimar_lineas_visuales(it["texto"]) - 1
+        partes.extend([blank] * max(extra, 0))
+    return "".join(partes)
 
 
 def _documentos_se_por_defecto() -> list[dict]:
@@ -519,6 +583,7 @@ def build_pages_cell_content(
     documentos_se: list[dict] | None = None,
     biometricos: list[dict] | None = None,
     declaraciones: list[dict] | None = None,
+    plural: bool = False,
 ) -> str:
     """Columna PAGES. Con evidencia adjunta (o identidades con documento
     propio), una línea por cada párrafo INCLUIDO de DESCRIPTION (en blanco
@@ -551,7 +616,7 @@ def build_pages_cell_content(
             blocks.append(_build_form_of_identity_pages(identidades or _identidades_por_defecto()))
             continue
         if cat == "supplemental_evidence":
-            blocks.append(_build_supplemental_evidence_pages(documentos_se or _documentos_se_por_defecto(), declaraciones))
+            blocks.append(_build_supplemental_evidence_pages(documentos_se or _documentos_se_por_defecto(), declaraciones, plural))
             continue
         frag_names = CATEGORY_FRAGMENTS[cat]
         items_by_frag_index = {item["frag_index"]: item for item in ITEMS_POR_CATEGORIA.get(cat, [])}
@@ -624,6 +689,7 @@ def build_exhibit_table(tab_groups: list[dict], plural: bool = False) -> str:
             tg.get("documentos_se"),
             tg.get("biometricos"),
             tg.get("declaraciones"),
+            plural,
         )
         row = (
             "<w:tr>"

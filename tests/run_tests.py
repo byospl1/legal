@@ -44,15 +44,61 @@ def _ev(inicio: int, n: int) -> dict:
 
 def _partir_parrafos_con_texto(xml: str) -> list[str]:
     """Lista de textos (uno por <w:p>, "" si el párrafo no tiene <w:t> con
-    contenido — spacer/blank) en el orden en que aparecen. Usado para
-    verificar que el "Pgs. X-Y" de PAGES cae en el mismo ÍNDICE de párrafo
-    que el documento correspondiente en DESCRIPTION."""
+    contenido — spacer/blank) en el orden en que aparecen."""
     parrafos = re.findall(r"<w:p[ >].*?</w:p>", xml, flags=re.DOTALL)
     out = []
     for p in parrafos:
         m = re.search(r"<w:t[^>]*>(.*?)</w:t>", p, flags=re.DOTALL)
         out.append(m.group(1) if m else "")
     return out
+
+
+def _lineas_inicio_por_parrafo(textos: list[str]) -> list[int]:
+    """Línea visual (1-based) donde EMPIEZA cada párrafo, contando cuántas
+    líneas visuales ocupa cada uno al envolver (_estimar_lineas_visuales;
+    un párrafo vacío = 1 línea). Modela cómo Word acumula altura en una
+    celda: el párrafo i empieza en 1 + sum(líneas de los párrafos previos)."""
+    inicios = []
+    linea = 1
+    for t in textos:
+        inicios.append(linea)
+        linea += eb._estimar_lineas_visuales(t) if t else 1
+    return inicios
+
+
+def _assert_supplemental_alineado(tg: dict) -> None:
+    """Verifica la invariante REAL de la tabla (Word alinea las celdas de una
+    fila por altura acumulada, no por conteo de párrafos): cada "Pgs. X-Y" de
+    la columna PAGES debe caer en la MISMA línea visual en la que EMPIEZA el
+    renglón del documento al que pertenece en DESCRIPTION — nunca en una
+    línea envuelta (2da+) de un documento anterior. Reemplaza al viejo chequeo
+    de "igual número de párrafos", que solo valía cuando ningún renglón
+    envolvía (ver el bug de la captura del Tab D, 2026-08-26)."""
+    desc = eb.build_description_cell_content(
+        tg["categorias"], tg.get("pais"), tg.get("anio_cc"), tg.get("anio_osac"),
+        tg.get("plural", False), tg.get("evidencias"), tg.get("tipo_fee"),
+        tg.get("biometricos"), tg.get("identidades"), tg.get("documentos_se"),
+        tg.get("declaraciones"),
+    )
+    pages = eb.build_pages_cell_content(
+        tg["categorias"], tg.get("evidencias"), tg.get("paginas", "1-2"),
+        tg.get("identidades"), tg.get("documentos_se"), tg.get("biometricos"),
+        tg.get("declaraciones"), tg.get("plural", False),
+    )
+    desc_textos = _partir_parrafos_con_texto(desc)
+    pages_textos = _partir_parrafos_con_texto(pages)
+    # En PAGES cada párrafo (valor corto "Pgs." o blank) ocupa 1 línea visual,
+    # así que el índice de párrafo == su línea visual (1-based).
+    pgs_lineas = [k + 1 for k, t in enumerate(pages_textos) if t.startswith("Pgs.")]
+    # Líneas donde EMPIEZA cada documento (párrafo) de DESCRIPTION.
+    inicios_desc = set(_lineas_inicio_por_parrafo(desc_textos))
+    for L in pgs_lineas:
+        _assert(
+            L in inicios_desc,
+            f"un 'Pgs.' cae en la línea visual {L}, que no es el inicio de ningún "
+            f"renglón de DESCRIPTION (cayó en una línea envuelta). "
+            f"desc={desc_textos!r} pages={pages_textos!r}",
+        )
 
 
 def _assert(cond: bool, msg: str) -> None:
@@ -147,13 +193,13 @@ def test_alineacion_supplemental_evidence():
             {"tipo": "Psychological Report", "titulo": None, "evidencia": _ev(4, 2)},
         ],
     }
-    d, p = _desc_pages(tg)
-    _assert(d == p, f"supplemental_evidence: DESCRIPTION={d} != PAGES={p}")
+    _assert_supplemental_alineado(tg)
 
 
 def test_declaraciones_por_rider():
     # líder + 2 riders, todos con su propia declaración adjunta -> los 3
-    # deben quedar incluidos, con texto distinto para cada uno.
+    # deben quedar incluidos, con texto distinto para cada uno, y cada "Pgs."
+    # alineado con la primera línea del renglón de su documento.
     tg = {
         "categorias": ["supplemental_evidence"],
         "declaraciones": [
@@ -163,14 +209,12 @@ def test_declaraciones_por_rider():
         ],
         "documentos_se": [],
     }
-    d, p = _desc_pages(tg)
-    _assert(d == p, f"declaraciones por rider: DESCRIPTION={d} != PAGES={p}")
-    # 3 declaraciones + 2 spacers entre ellas (ver docstring de
-    # _build_supplemental_evidence_description) = 5 párrafos.
-    _assert(d == 5, f"se esperaban 5 párrafos (3 declaraciones + 2 spacers), se obtuvieron {d}")
+    _assert_supplemental_alineado(tg)
     desc = eb.build_description_cell_content(
         tg["categorias"], None, documentos_se=[], declaraciones=tg["declaraciones"]
     )
+    # DESCRIPTION: 1 párrafo por documento, sin separadores.
+    _assert(len(_partir_parrafos_con_texto(desc)) == 3, "se esperaban 3 párrafos en DESCRIPTION (1 por declaración)")
     _assert("Rider’s Rider Uno Declaration" in desc, "falta la declaración de Rider Uno")
     _assert("Rider’s Rider Dos Declaration" in desc, "falta la declaración de Rider Dos")
     _assert("Respondent’s Declaration" in desc, "falta la declaración del líder")
@@ -187,8 +231,7 @@ def test_declaraciones_omite_sin_evidencia():
         ],
         "documentos_se": [{"tipo": "Psychological Report", "titulo": None, "evidencia": _ev(3, 1)}],
     }
-    d, p = _desc_pages(tg)
-    _assert(d == p, f"declaraciones omitidas: DESCRIPTION={d} != PAGES={p}")
+    _assert_supplemental_alineado(tg)
     desc = eb.build_description_cell_content(
         tg["categorias"], None, documentos_se=tg["documentos_se"], declaraciones=tg["declaraciones"]
     )
@@ -227,25 +270,26 @@ def test_declaraciones_multi_tipo_por_persona():
         ],
         "documentos_se": [],
     }
-    d, p = _desc_pages(tg)
-    _assert(d == p, f"declaraciones multi-tipo: DESCRIPTION={d} != PAGES={p}")
-    # 3 documentos + 2 spacers entre ellos = 5 párrafos.
-    _assert(d == 5, f"se esperaban 5 párrafos (3 documentos + 2 spacers), se obtuvieron {d}")
+    _assert_supplemental_alineado(tg)
     desc = eb.build_description_cell_content(
         tg["categorias"], None, documentos_se=[], declaraciones=tg["declaraciones"]
     )
+    _assert(len(_partir_parrafos_con_texto(desc)) == 3, "se esperaban 3 párrafos en DESCRIPTION (1 por documento)")
     _assert("Rider’s Rider Uno Psychological Report." in desc, "falta el Psychological Report de Rider Uno")
     _assert("Rider’s Rider Uno News about amenazas." in desc, "falta la News de Rider Uno")
 
 
 def test_declaraciones_pgs_alineado_con_su_propio_parrafo():
     # Caso real reportado por el usuario (2026-08-26, captura Tab D): líder +
-    # 1 rider, ambos con declaración adjunta. Antes del fix, sin spacer entre
-    # documentos, el "Pgs." del rider caía en el índice de párrafo de la
-    # LÍNEA ENVUELTA de la declaración del líder (que ocupa 2 líneas visuales
-    # de texto fijo), no en el índice del propio párrafo del rider. Ahora debe
-    # haber un spacer/blank entre documentos, y cada "Pgs." debe estar en el
-    # MISMO índice de párrafo que el documento al que pertenece.
+    # 1 rider, ambos con declaración adjunta. El texto del líder ("Respondent's
+    # Declaration for Support of Asylum Withholding of Removal and Relief Under
+    # CAT.") es fijo y envuelve a 2 líneas visuales; el del rider (nombre
+    # largo) a 3. Word alinea las celdas por altura acumulada, así que:
+    #   DESCRIPTION: [líder (líneas 1-2), rider (líneas 3-5)]  -> 2 párrafos
+    #   PAGES:       [Pgs.46-52 (línea 1), blank (línea 2, compensa el wrap del
+    #                 líder), Pgs.53-59 (línea 3), blank, blank]  -> 5 párrafos
+    # Antes del fix (sin compensación), "Pgs. 53-59" caía en la línea visual 2,
+    # que es la 2da línea envuelta del renglón del líder — no junto al rider.
     tg = {
         "categorias": ["supplemental_evidence"],
         "declaraciones": [
@@ -262,16 +306,23 @@ def test_declaraciones_pgs_alineado_con_su_propio_parrafo():
     )
     desc_textos = _partir_parrafos_con_texto(desc)
     pages_textos = _partir_parrafos_con_texto(pages)
-    _assert(
-        len(desc_textos) == 3 and len(pages_textos) == 3,
-        f"se esperaban 3 párrafos (líder, spacer, rider), desc={len(desc_textos)} pages={len(pages_textos)}",
-    )
+    # DESCRIPTION: exactamente 2 párrafos (1 por documento, SIN línea en blanco
+    # entre ellos — como pidió el usuario).
+    _assert(len(desc_textos) == 2, f"DESCRIPTION debía tener 2 párrafos, tiene {len(desc_textos)}: {desc_textos!r}")
     _assert("Respondent" in desc_textos[0], f"párrafo 0 de DESCRIPTION debía ser el líder: {desc_textos[0]!r}")
-    _assert(desc_textos[1] == "", "párrafo 1 de DESCRIPTION debía ser el spacer (vacío)")
-    _assert("MORALES-ZUNIGA" in desc_textos[2], f"párrafo 2 de DESCRIPTION debía ser el rider: {desc_textos[2]!r}")
-    _assert(pages_textos[0] == "Pgs. 46-52", f"Pgs. del líder en el índice equivocado: {pages_textos[0]!r}")
-    _assert(pages_textos[1] == "", "párrafo 1 de PAGES debía ser el blank (vacío)")
-    _assert(pages_textos[2] == "Pgs. 53-59", f"Pgs. del rider en el índice equivocado: {pages_textos[2]!r}")
+    _assert("MORALES-ZUNIGA" in desc_textos[1], f"párrafo 1 de DESCRIPTION debía ser el rider: {desc_textos[1]!r}")
+    # Confirmar que el estimador ve al líder como 2 líneas y al rider como 3
+    # (si esto cambia, la aritmética de abajo hay que recalibrarla).
+    _assert(eb._estimar_lineas_visuales(desc_textos[0]) == 2, "el renglón del líder debía estimarse en 2 líneas")
+    _assert(eb._estimar_lineas_visuales(desc_textos[1]) == 3, "el renglón del rider debía estimarse en 3 líneas")
+    # PAGES: valor del líder + 1 blank (wrap del líder) + valor del rider + 2
+    # blanks (wrap del rider) = 5 párrafos.
+    _assert(
+        pages_textos == ["Pgs. 46-52", "", "Pgs. 53-59", "", ""],
+        f"PAGES no quedó con la compensación esperada: {pages_textos!r}",
+    )
+    # Y la invariante general por línea visual.
+    _assert_supplemental_alineado(tg)
 
 
 def test_alineacion_multi_categoria():
