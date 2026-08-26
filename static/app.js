@@ -503,12 +503,14 @@ async function addTabRow() {
     <div class="identidades-tab" style="margin-top:10px;"></div>
     <div class="biometricos-tab" style="margin-top:10px;"></div>
     <div class="documentos-tab" style="margin-top:10px;"></div>
+    <div class="declaraciones-tab" style="margin-top:10px;"></div>
     <div class="documentos-se-tab" style="margin-top:10px;"></div>
   `;
   $("#tabsList").appendChild(div);
   div._identidadesEvidencia = {}; // { personaKey: [{ id, tipo_doc, evidencia_id, num_paginas }, ...] } — más de un documento por persona
   div._identidadesCounter = 0;
   div._biometricosEvidencia = {};
+  div._declaracionesEvidencia = {}; // { personaKey: { evidencia_id, num_paginas } } — una Declaration por persona
   div._documentosSE = []; // [{ id, tipo, titulo, evidencia_id, num_paginas }]
   div._documentosSECounter = 0;
 
@@ -526,6 +528,7 @@ async function addTabRow() {
     renderIdentidadesUploads(div);
     renderBiometricosUploads(div);
     renderDocumentUploads(div);
+    renderDeclaracionesUploads(div);
     renderDocumentosSE(div);
   };
   for (const chk of div.querySelectorAll(".cat-check")) {
@@ -535,6 +538,7 @@ async function addTabRow() {
   renderIdentidadesUploads(div);
   renderBiometricosUploads(div);
   renderDocumentUploads(div);
+  renderDeclaracionesUploads(div);
   renderDocumentosSE(div);
   recalcularPaginas();
 }
@@ -772,6 +776,74 @@ async function onBiometricoUpload(card, input) {
   }
 }
 
+/** Reconstruye las filas "archivo" de Declaration (dentro de Supplemental
+ * Evidence), una por persona del caso (líder + cada rider) — mismo
+ * patrón que renderBiometricosUploads, sin fecha (solo el PDF). Una
+ * persona sin su propio archivo se omite del documento en vez de exigir
+ * nada (ver criterio "modo evidencia" en motor/exhibit_builder.py). */
+function renderDeclaracionesUploads(card) {
+  const cont = card.querySelector(".declaraciones-tab");
+  const categorias = categoriasMarcadas(card);
+  card._declaracionesEvidencia = card._declaracionesEvidencia || {};
+
+  if (!categorias.includes("supplemental_evidence")) {
+    cont.innerHTML = "";
+    return;
+  }
+
+  const personas = personasDelCaso();
+  const keysActivos = new Set(personas.map((p) => p.key));
+  for (const key of Object.keys(card._declaracionesEvidencia)) {
+    if (!keysActivos.has(key)) delete card._declaracionesEvidencia[key];
+  }
+
+  cont.innerHTML =
+    `<label style="font-size:13px; font-weight:600; color:var(--text-dim);">Declaration — una por persona (líder y/o cada rider, opcional; sin evidencia adjunta se omite del documento si ya hay evidencia en otra parte de Supplemental Evidence)</label>` +
+    personas
+      .map(
+        (p) => `
+      <div class="field" style="margin-top:6px;">
+        <label style="font-weight:400;">${escapeHtml(p.label)} — archivo (PDF, opcional)</label>
+        <input type="file" class="declaracion-upload-input" data-persona-key="${p.key}" accept="application/pdf">
+        <span class="muted declaracion-upload-status" data-persona-key="${p.key}"></span>
+      </div>`
+      )
+      .join("");
+
+  for (const input of cont.querySelectorAll(".declaracion-upload-input")) {
+    input.addEventListener("change", () => onDeclaracionUpload(card, input));
+  }
+}
+
+async function onDeclaracionUpload(card, input) {
+  const key = input.dataset.personaKey;
+  const statusEl = card.querySelector(`.declaracion-upload-status[data-persona-key="${key}"]`);
+  const file = input.files[0];
+  card._declaracionesEvidencia = card._declaracionesEvidencia || {};
+  if (!file) {
+    delete card._declaracionesEvidencia[key];
+    statusEl.textContent = "";
+    recalcularPaginas();
+    return;
+  }
+  statusEl.textContent = "Subiendo…";
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("tipo", "declaration");
+    const res = await fetch("/api/evidencia", { method: "POST", body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Error al subir el archivo");
+    card._declaracionesEvidencia[key] = { evidencia_id: data.evidencia_id, num_paginas: data.num_paginas };
+    statusEl.textContent = `${data.num_paginas} página(s).`;
+    recalcularPaginas();
+  } catch (e) {
+    statusEl.textContent = "Error: " + e.message;
+    input.value = "";
+    delete card._declaracionesEvidencia[key];
+  }
+}
+
 function categoriasMarcadas(card) {
   return [...card.querySelectorAll(".cat-check")].filter((c) => c.checked).map((c) => c.dataset.cat);
 }
@@ -873,13 +945,9 @@ function renderDocumentosSE(card) {
     return;
   }
 
-  if (card._documentosSE.length === 0) {
-    agregarDocumentoSE(card, false);
-  }
-
   cont.innerHTML =
     `<div class="row" style="justify-content:space-between;">
-      <label style="font-size:13px; font-weight:600; color:var(--text-dim);">Documentos de Supplemental Evidence (normalmente entre 5 y 10)</label>
+      <label style="font-size:13px; font-weight:600; color:var(--text-dim);">Otros documentos de Supplemental Evidence (Psychological Report, News — opcional)</label>
       <button type="button" class="btn-agregar-doc-se">+ Agregar documento</button>
     </div>` +
     card._documentosSE
@@ -946,7 +1014,7 @@ function agregarDocumentoSE(card, conRender) {
   card._documentosSECounter = (card._documentosSECounter || 0) + 1;
   card._documentosSE.push({
     id: `se_${card.dataset.n}_${card._documentosSECounter}`,
-    tipo: "Declaration",
+    tipo: TIPOS_SUPPLEMENTAL_EVIDENCE[0] || "Psychological Report",
     titulo: "",
     evidencia_id: null,
     num_paginas: null,
@@ -1022,6 +1090,16 @@ function recalcularPaginas() {
         continue;
       }
       if (cat === "supplemental_evidence") {
+        for (const persona of personasDelCaso()) {
+          const info = (card._declaracionesEvidencia || {})[persona.key];
+          const statusEl = card.querySelector(`.declaracion-upload-status[data-persona-key="${persona.key}"]`);
+          if (!info) continue;
+          huboDocumento = true;
+          if (inicioTab === null) inicioTab = pagina;
+          const inicioDoc = pagina;
+          pagina += info.num_paginas;
+          if (statusEl) statusEl.textContent = `${info.num_paginas} página(s) — empieza en la página ${inicioDoc}.`;
+        }
         for (const doc of card._documentosSE || []) {
           const statusEl = card.querySelector(`.doc-se-upload-status[data-doc-id="${doc.id}"]`);
           if (!doc.evidencia_id) continue;
@@ -1137,7 +1215,19 @@ function collectExhibits() {
           evidencia_id: doc.evidencia_id,
         }))
       : [];
-    return { letra, paginas, titulo, categorias, pais, anio_cc, anio_osac, tipo_fee, biometricos, evidencias, identidades, documentos_se };
+    const declaraciones = categorias.includes("supplemental_evidence")
+      ? personasDelCaso().map((p) => {
+          const info = (card._declaracionesEvidencia || {})[p.key];
+          return {
+            persona_nombre: p.nombre,
+            evidencia_id: info ? info.evidencia_id : null,
+          };
+        })
+      : [];
+    return {
+      letra, paginas, titulo, categorias, pais, anio_cc, anio_osac, tipo_fee,
+      biometricos, evidencias, identidades, documentos_se, declaraciones,
+    };
   });
 }
 
@@ -1230,7 +1320,8 @@ async function generarDocumento() {
       (tg.evidencias && Object.keys(tg.evidencias).length > 0) ||
       (tg.identidades || []).some((i) => i.evidencia_id) ||
       (tg.documentos_se || []).some((d) => d.evidencia_id) ||
-      (tg.biometricos || []).some((b) => b.evidencia_id)
+      (tg.biometricos || []).some((b) => b.evidencia_id) ||
+      (tg.declaraciones || []).some((d) => d.evidencia_id)
   );
   const separar_por_tab = hayEvidencia ? true : $("#separarPorTab").checked;
   const generar_pdf = hayEvidencia ? true : $("#generarPdf").checked;

@@ -56,10 +56,12 @@ def _desc_pages(tg: dict) -> tuple[int, int]:
         tg["categorias"], tg.get("pais"), tg.get("anio_cc"), tg.get("anio_osac"),
         tg.get("plural", False), tg.get("evidencias"), tg.get("tipo_fee"),
         tg.get("biometricos"), tg.get("identidades"), tg.get("documentos_se"),
+        tg.get("declaraciones"),
     )
     pages = eb.build_pages_cell_content(
         tg["categorias"], tg.get("evidencias"), tg.get("paginas", "1-2"),
         tg.get("identidades"), tg.get("documentos_se"), tg.get("biometricos"),
+        tg.get("declaraciones"),
     )
     return _contar_parrafos(desc), _contar_parrafos(pages)
 
@@ -126,14 +128,75 @@ def test_alineacion_form_of_identity():
 def test_alineacion_supplemental_evidence():
     tg = {
         "categorias": ["supplemental_evidence"],
+        "declaraciones": [{"persona_nombre": None, "evidencia": _ev(1, 3)}],
         "documentos_se": [
-            {"tipo": "Declaration", "titulo": None, "evidencia": _ev(1, 3)},
             {"tipo": "News", "titulo": "algo", "evidencia": None},
             {"tipo": "Psychological Report", "titulo": None, "evidencia": _ev(4, 2)},
         ],
     }
     d, p = _desc_pages(tg)
     _assert(d == p, f"supplemental_evidence: DESCRIPTION={d} != PAGES={p}")
+
+
+def test_declaraciones_por_rider():
+    # líder + 2 riders, todos con su propia declaración adjunta -> los 3
+    # deben quedar incluidos, con texto distinto para cada uno.
+    tg = {
+        "categorias": ["supplemental_evidence"],
+        "declaraciones": [
+            {"persona_nombre": None, "evidencia": _ev(1, 2)},
+            {"persona_nombre": "Rider Uno", "evidencia": _ev(3, 2)},
+            {"persona_nombre": "Rider Dos", "evidencia": _ev(5, 2)},
+        ],
+        "documentos_se": [],
+    }
+    d, p = _desc_pages(tg)
+    _assert(d == p, f"declaraciones por rider: DESCRIPTION={d} != PAGES={p}")
+    _assert(d == 3, f"se esperaban 3 declaraciones, se obtuvieron {d}")
+    desc = eb.build_description_cell_content(
+        tg["categorias"], None, documentos_se=[], declaraciones=tg["declaraciones"]
+    )
+    _assert("Rider’s Rider Uno Declaration" in desc, "falta la declaración de Rider Uno")
+    _assert("Rider’s Rider Dos Declaration" in desc, "falta la declaración de Rider Dos")
+    _assert("Respondent’s Declaration" in desc, "falta la declaración del líder")
+
+
+def test_declaraciones_omite_sin_evidencia():
+    # modo evidencia (Psychological Report con archivo) + un rider SIN su
+    # propia declaración adjunta -> ese rider se omite, sin error.
+    tg = {
+        "categorias": ["supplemental_evidence"],
+        "declaraciones": [
+            {"persona_nombre": None, "evidencia": _ev(1, 2)},
+            {"persona_nombre": "Rider Uno", "evidencia": None},
+        ],
+        "documentos_se": [{"tipo": "Psychological Report", "titulo": None, "evidencia": _ev(3, 1)}],
+    }
+    d, p = _desc_pages(tg)
+    _assert(d == p, f"declaraciones omitidas: DESCRIPTION={d} != PAGES={p}")
+    desc = eb.build_description_cell_content(
+        tg["categorias"], None, documentos_se=tg["documentos_se"], declaraciones=tg["declaraciones"]
+    )
+    _assert("Rider Uno" not in desc, "Rider Uno no debía aparecer sin su propia evidencia")
+    _assert("Respondent’s Declaration" in desc, "la declaración del líder sí debía incluirse")
+
+
+def test_declaraciones_modo_manual():
+    # nada subido en ninguna parte de supplemental_evidence -> se incluyen
+    # las declaraciones de TODAS las personas del caso (líder + riders).
+    tg = {
+        "categorias": ["supplemental_evidence"],
+        "declaraciones": [
+            {"persona_nombre": None, "evidencia": None},
+            {"persona_nombre": "Rider Uno", "evidencia": None},
+        ],
+        "documentos_se": [],
+    }
+    desc = eb.build_description_cell_content(
+        tg["categorias"], None, documentos_se=[], declaraciones=tg["declaraciones"]
+    )
+    _assert("Respondent’s Declaration" in desc, "modo manual: falta la declaración del líder")
+    _assert("Rider’s Rider Uno Declaration" in desc, "modo manual: falta la declaración de Rider Uno")
 
 
 def test_alineacion_multi_categoria():

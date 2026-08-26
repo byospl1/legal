@@ -878,6 +878,91 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   adjunto, y que en modo completamente manual (nada subido en ningún
   lado) se sigue exigiendo la fecha de todas las personas, sin cambios.
 
+## Supplemental Evidence: Declaration pasó a ser 1 documento por rider (2026-08-26)
+
+- **Pedido del usuario**: en el Tab de Supplemental Evidence, permitir
+  agregar una Declaration por cada rider del caso (además de la del
+  líder), y que un rider sin su propia declaración adjunta se omita del
+  documento (ni renglón, ni mención) en vez de forzar una entrada vacía o
+  genérica.
+- **Antes**: "Declaration" era uno de los 3 tipos (`TIPOS_SUPPLEMENTAL_EVIDENCE
+  = ["Declaration", "Psychological Report", "News"]`) de la lista libre
+  `documentos_se` (agregar/quitar documentos a mano, sin asociar a
+  persona) — el texto era SIEMPRE genérico ("Respondent's Declaration for
+  Support of...") sin importar cuántas veces se agregara ni de quién
+  fuera, así que dos declaraciones (líder + rider) hubieran salido con el
+  mismo texto exacto, sin poder distinguir a cuál persona pertenecía cada
+  una.
+- **Fix, mismo patrón que Biometrics Compliance** (por-persona + "modo
+  evidencia"): "Declaration" se sacó de `TIPOS_SUPPLEMENTAL_EVIDENCE`
+  (ahora solo `["Psychological Report", "News"]`, que siguen siendo la
+  lista libre sin persona asociada) y pasó a ser una sección dinámica
+  nueva, `declaraciones: list[dict]` (`{persona_nombre, evidencia}`), con
+  una entrada automática por persona del caso (líder + cada rider) —
+  clonado de `biometricos` pero SIN campo obligatorio adicional (no hay
+  equivalente a "fecha", solo el archivo).
+  - `motor/exhibit_builder.py`: `_declaration_line_text(persona_nombre)`
+    ("Respondent's Declaration..." / "Rider's {NOMBRE} Declaration...",
+    mismo texto base `_TEXTO_DECLARATION` para el líder que ya existía),
+    `_declaraciones_por_defecto()`, `_supplemental_evidence_en_modo_evidencia(documentos,
+    declaraciones)` (True si hay evidencia en CUALQUIER parte de la
+    categoría — declaraciones de otra persona, o algún Psychological
+    Report/News con archivo). `_build_supplemental_evidence_description`/
+    `_pages` ganaron el parámetro `declaraciones` y ahora emiten primero
+    las declaraciones incluidas (omitiendo a quien no tenga su propio
+    archivo si la categoría está en modo evidencia; sin NADA subido en
+    ninguna parte —modo manual— se incluyen todas, líder + cada rider,
+    igual que el ítem genérico de antes) y después los documentos libres
+    de `documentos_se`. Las líneas de declaración NO se pluralizan con
+    `pluralizar_respondent` aunque el Tab sea plural (mismo criterio que
+    Form of Identity/Biometrics: ya distinguen por persona) — los
+    documentos libres (Psychological Report/News) sí se siguen
+    pluralizando como antes.
+  - `declaraciones` se sumó a las firmas de `_build_category_xml`,
+    `build_description_cell_content`, `build_pages_cell_content` y
+    `build_exhibit_table` (mismo hilo que ya llevaban `biometricos`/
+    `identidades`) y al chequeo de "hay algo con evidencia adjunta en el
+    Tab" al inicio de `build_pages_cell_content` (**si se olvida ese
+    chequeo, es el mismo bug ya documentado para Biometrics** — con
+    evidencia SOLO en declaraciones, la función caería en el fallback de
+    "una sola línea con el rango completo" en vez de construir la tabla
+    real por categoría).
+  - `app.py._resolver_paginas_evidencia`: nuevo bloque `for decl in
+    declaraciones` dentro de la rama `supplemental_evidence` (ANTES del
+    loop de `documentos_se`, para que el orden de páginas coincida con el
+    orden en que `_build_supplemental_evidence_description` las agrega:
+    declaraciones primero, documentos libres después) — mismo patrón que
+    ya usan `identidades`/`biometricos`. También se sumó a `tiene_algo`
+    (gate para decidir si se resuelven páginas), al gate `tiene_evidencia`
+    de `api_generar`, y a `docs_con_pagina` (lista de PDFs a fusionar).
+  - `static/app.js`: nuevo `renderDeclaracionesUploads`/`onDeclaracionUpload`
+    (clon de `renderBiometricosUploads` pero sin el input de fecha —
+    solo el archivo, opcional, uno por persona), nuevo
+    `card._declaracionesEvidencia = { personaKey: {evidencia_id,
+    num_paginas} }`. Se quitó el auto-agregado de una fila "Declaration"
+    por defecto en `documentos_se` al marcar la categoría (ya no aplica,
+    `_documentos_se_por_defecto()` en Python pasó a devolver `[]`) — el
+    tipo por defecto de una fila nueva agregada a mano pasó de
+    `"Declaration"` (ya no es un tipo válido) a
+    `TIPOS_SUPPLEMENTAL_EVIDENCE[0]` ("Psychological Report").
+    `recalcularPaginas()` y `collectExhibits()` actualizados para incluir
+    `declaraciones` (mismo patrón por-persona que `biometricos`, sin
+    fecha) — orden declaraciones-antes-de-documentos_se replicado también
+    ahí para que el preview de páginas del navegador coincida con lo que
+    el backend realmente resuelve.
+- Verificado con pruebas manuales: 3 tests nuevos en `tests/run_tests.py`
+  (`test_declaraciones_por_rider`, `test_declaraciones_omite_sin_evidencia`,
+  `test_declaraciones_modo_manual` — suite completa en 13/13) más un
+  `build_exhibit_table` real (líder + Rider Uno con archivo, Rider Dos sin
+  archivo, un News con archivo, `plural=True`): Rider Dos omitido por
+  completo, líder y Rider Uno con su propio texto de declaración, y el
+  News pluralizado a "Respondents'" (comportamiento esperado — solo las
+  declaraciones evitan la pluralización, no el resto de la categoría).
+  `node --check static/app.js` sin errores. **No se pudo probar el flujo
+  completo en un navegador real** (no hay UI interactiva en este
+  sandbox) — si algo no se ve bien al usarlo en la máquina del despacho,
+  avisar con el detalle exacto.
+
 ## Form of Identity: ahora permite más de un documento por persona (2026-08-26)
 
 - **Pedido del usuario**: en el Tab de Form of Identity, permitir que una

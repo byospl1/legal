@@ -261,7 +261,9 @@ def _resolver_paginas_evidencia(pagina_inicial_lote: int, exhibits: list[dict]) 
     identidad de tg['identidades'] con su propia 'evidencia' resuelta
     (Form of Identity tiene un documento por persona, no un catálogo fijo).
     Igual para cada entrada de tg['biometricos'] (Biometrics Compliance
-    también es un documento por persona, dentro de la categoría "fee").
+    también es un documento por persona, dentro de la categoría "fee") y
+    de tg['declaraciones'] (Declaration también es un documento por
+    persona, dentro de la categoría "supplemental_evidence").
     Devuelve la próxima página disponible después de este lote."""
     pagina = pagina_inicial_lote
     for tg in exhibits:
@@ -269,11 +271,13 @@ def _resolver_paginas_evidencia(pagina_inicial_lote: int, exhibits: list[dict]) 
         identidades = tg.get("identidades") or []
         documentos_se = tg.get("documentos_se") or []
         biometricos = tg.get("biometricos") or []
+        declaraciones = tg.get("declaraciones") or []
         tiene_algo = (
             bool(evidencias_ids)
             or any(i.get("evidencia_id") for i in identidades)
             or any(d.get("evidencia_id") for d in documentos_se)
             or any(b.get("evidencia_id") for b in biometricos)
+            or any(d.get("evidencia_id") for d in declaraciones)
         )
         if not tiene_algo:
             continue
@@ -303,6 +307,24 @@ def _resolver_paginas_evidencia(pagina_inicial_lote: int, exhibits: list[dict]) 
                     pagina += n
                 continue
             if categoria == "supplemental_evidence":
+                for decl in declaraciones:
+                    evidencia_id = decl.get("evidencia_id")
+                    decl["evidencia"] = None
+                    if not evidencia_id:
+                        continue
+                    info = _EVIDENCIAS.get(evidencia_id)
+                    if not info:
+                        raise FillEngineError(
+                            f"No se encontró el documento de Declaration subido en el Tab "
+                            f"{tg.get('letra', '?')} — si reiniciaste el servidor después de subirlo, "
+                            "vuelve a subirlo e intenta de nuevo."
+                        )
+                    n = info["num_paginas"]
+                    inicio = pagina
+                    if inicio_tab is None:
+                        inicio_tab = inicio
+                    decl["evidencia"] = {"pagina_inicio": inicio, "num_paginas": n, "path": info["path"]}
+                    pagina += n
                 for doc in documentos_se:
                     evidencia_id = doc.get("evidencia_id")
                     doc["evidencia"] = None
@@ -362,6 +384,7 @@ def _resolver_paginas_evidencia(pagina_inicial_lote: int, exhibits: list[dict]) 
         tg["identidades"] = identidades
         tg["documentos_se"] = documentos_se
         tg["biometricos"] = biometricos
+        tg["declaraciones"] = declaraciones
         if inicio_tab is not None:
             fin_tab = pagina - 1
             tg["paginas"] = str(inicio_tab) if inicio_tab == fin_tab else f"{inicio_tab}-{fin_tab}"
@@ -426,6 +449,7 @@ def api_generar():
         or any(i.get("evidencia_id") for i in (tg.get("identidades") or []))
         or any(d.get("evidencia_id") for d in (tg.get("documentos_se") or []))
         or any(b.get("evidencia_id") for b in (tg.get("biometricos") or []))
+        or any(d.get("evidencia_id") for d in (tg.get("declaraciones") or []))
         for tg in exhibits
     )
     if tiene_evidencia:
@@ -502,6 +526,7 @@ def api_generar():
         identidades_resueltas = (tab_group or {}).get("identidades") or []
         documentos_se_resueltos = (tab_group or {}).get("documentos_se") or []
         biometricos_resueltos = (tab_group or {}).get("biometricos") or []
+        declaraciones_resueltas = (tab_group or {}).get("declaraciones") or []
         docs_con_pagina = [(info["pagina_inicio"], info["path"]) for info in evidencias_resueltas.values()]
         docs_con_pagina += [
             (i["evidencia"]["pagina_inicio"], i["evidencia"]["path"]) for i in identidades_resueltas if i.get("evidencia")
@@ -511,6 +536,9 @@ def api_generar():
         ]
         docs_con_pagina += [
             (b["evidencia"]["pagina_inicio"], b["evidencia"]["path"]) for b in biometricos_resueltos if b.get("evidencia")
+        ]
+        docs_con_pagina += [
+            (d["evidencia"]["pagina_inicio"], d["evidencia"]["path"]) for d in declaraciones_resueltas if d.get("evidencia")
         ]
         if docs_con_pagina and result.pdf_path:
             docs_con_pagina.sort(key=lambda x: x[0])

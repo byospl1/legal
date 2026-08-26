@@ -56,8 +56,11 @@ CATEGORY_FRAGMENTS: dict[str, list[str]] = {
 SUBTITULOS_ATADOS_A_ITEM: dict[str, dict[int, int]] = {}
 
 # Textos fijos por tipo de documento de Supplemental Evidence. "News" lleva
-# título variable (el de la noticia); los demás son fijos.
-TIPOS_SUPPLEMENTAL_EVIDENCE = ["Declaration", "Psychological Report", "News"]
+# título variable (el de la noticia); los demás son fijos. "Declaration" ya
+# NO vive aquí (2026-08-26) — pasó a ser una sección dinámica por persona
+# del caso (líder + cada rider), igual que Biometrics Compliance, ver
+# `declaraciones` en _build_supplemental_evidence_description/_pages.
+TIPOS_SUPPLEMENTAL_EVIDENCE = ["Psychological Report", "News"]
 
 _TEXTO_DECLARATION = (
     "Respondent’s Declaration for Support of Asylum Withholding of Removal and Relief Under CAT."
@@ -301,9 +304,49 @@ def _supplemental_evidence_line_text(tipo: str | None, titulo: str | None) -> st
     return _TEXTO_DECLARATION
 
 
-def _build_supplemental_evidence_description(documentos: list[dict], plural: bool) -> str:
+def _declaration_line_text(persona_nombre: str | None) -> str:
+    if persona_nombre:
+        return (
+            f"Rider’s {persona_nombre} Declaration for Support of Asylum Withholding "
+            "of Removal and Relief Under CAT."
+        )
+    return _TEXTO_DECLARATION
+
+
+def _declaraciones_por_defecto() -> list[dict]:
+    return [{"persona_nombre": None, "evidencia": None}]
+
+
+def _supplemental_evidence_en_modo_evidencia(documentos: list[dict], declaraciones: list[dict]) -> bool:
+    """Mismo criterio "modo evidencia" que ya usan Fee/Biometrics y CC/OSAC:
+    si hay evidencia adjunta EN ALGUNA PARTE de "supplemental_evidence"
+    (una declaración de alguna persona, o alguno de los documentos libres
+    de Psychological Report/News), una persona SIN su propia declaración
+    adjunta se omite por completo (no se incluye una línea "Respondent's/
+    Rider's ... Declaration..." vacía). Sin NADA subido en ninguna parte de
+    la categoría (modo manual puro), se incluyen las declaraciones de TODAS
+    las personas del caso (líder + cada rider) — mismo comportamiento que
+    tenía el único ítem genérico "Respondent's Declaration..." de antes."""
+    if any(d.get("evidencia") for d in documentos):
+        return True
+    return any(d.get("evidencia") or d.get("evidencia_id") for d in declaraciones)
+
+
+def _build_supplemental_evidence_description(
+    documentos: list[dict], plural: bool, declaraciones: list[dict] | None = None
+) -> str:
+    declaraciones = declaraciones if declaraciones is not None else _declaraciones_por_defecto()
+    modo_evidencia = _supplemental_evidence_en_modo_evidencia(documentos, declaraciones)
     item_tpl = _load("item_declaration")
     lineas = []
+    for decl in declaraciones:
+        if modo_evidencia and not (decl.get("evidencia") or decl.get("evidencia_id")):
+            continue
+        texto = _declaration_line_text(decl.get("persona_nombre"))
+        # Las declaraciones ya distinguen por persona ("Respondent's" vs
+        # "Rider's {NOMBRE}") igual que Form of Identity/Biometrics — no se
+        # pluralizan aunque el Tab sea plural, mismo criterio que esas dos.
+        lineas.append(_set_first_t_text(item_tpl, texto))
     for doc in documentos:
         texto = _supplemental_evidence_line_text(doc.get("tipo"), doc.get("titulo"))
         linea = _set_first_t_text(item_tpl, texto)
@@ -313,10 +356,23 @@ def _build_supplemental_evidence_description(documentos: list[dict], plural: boo
     return "".join(lineas)
 
 
-def _build_supplemental_evidence_pages(documentos: list[dict]) -> str:
+def _build_supplemental_evidence_pages(documentos: list[dict], declaraciones: list[dict] | None = None) -> str:
+    declaraciones = declaraciones if declaraciones is not None else _declaraciones_por_defecto()
+    modo_evidencia = _supplemental_evidence_en_modo_evidencia(documentos, declaraciones)
     pages_value_tpl = _load("pages_value")
     blank = _set_first_t_text(pages_value_tpl, "")
     lineas = []
+    for decl in declaraciones:
+        if modo_evidencia and not (decl.get("evidencia") or decl.get("evidencia_id")):
+            continue
+        info = decl.get("evidencia")
+        if info and info.get("pagina_inicio") and info.get("num_paginas"):
+            inicio = info["pagina_inicio"]
+            fin = inicio + info["num_paginas"] - 1
+            texto = f"Pgs. {inicio}" if inicio == fin else f"Pgs. {inicio}-{fin}"
+            lineas.append(_set_first_t_text(pages_value_tpl, texto))
+        else:
+            lineas.append(blank)
     for doc in documentos:
         info = doc.get("evidencia")
         if info and info.get("pagina_inicio") and info.get("num_paginas"):
@@ -330,7 +386,7 @@ def _build_supplemental_evidence_pages(documentos: list[dict]) -> str:
 
 
 def _documentos_se_por_defecto() -> list[dict]:
-    return [{"tipo": "Declaration", "titulo": None}]
+    return []
 
 
 def _build_category_xml(
@@ -344,6 +400,7 @@ def _build_category_xml(
     biometricos: list[dict] | None = None,
     identidades: list[dict] | None = None,
     documentos_se: list[dict] | None = None,
+    declaraciones: list[dict] | None = None,
 ) -> str:
     if categoria == "form_of_identity":
         if not pais:
@@ -351,7 +408,9 @@ def _build_category_xml(
         return _build_form_of_identity_description(pais, identidades or _identidades_por_defecto())
 
     if categoria == "supplemental_evidence":
-        return _build_supplemental_evidence_description(documentos_se or _documentos_se_por_defecto(), plural)
+        return _build_supplemental_evidence_description(
+            documentos_se or _documentos_se_por_defecto(), plural, declaraciones
+        )
 
     frag_names = CATEGORY_FRAGMENTS[categoria]
     parts = [_load(n) for n in frag_names]
@@ -412,12 +471,13 @@ def build_description_cell_content(
     biometricos: list[dict] | None = None,
     identidades: list[dict] | None = None,
     documentos_se: list[dict] | None = None,
+    declaraciones: list[dict] | None = None,
 ) -> str:
     spacer = _load("spacer")
     ordered = [c for c in CATEGORY_ORDER if c in categorias]
     blocks = [
         _build_category_xml(
-            c, pais, anio_cc, anio_osac, plural, evidencias, tipo_fee, biometricos, identidades, documentos_se
+            c, pais, anio_cc, anio_osac, plural, evidencias, tipo_fee, biometricos, identidades, documentos_se, declaraciones
         )
         for c in ordered
     ]
@@ -431,6 +491,7 @@ def build_pages_cell_content(
     identidades: list[dict] | None = None,
     documentos_se: list[dict] | None = None,
     biometricos: list[dict] | None = None,
+    declaraciones: list[dict] | None = None,
 ) -> str:
     """Columna PAGES. Con evidencia adjunta (o identidades con documento
     propio), una línea por cada párrafo INCLUIDO de DESCRIPTION (en blanco
@@ -444,8 +505,15 @@ def build_pages_cell_content(
     hay_identidades_con_datos = identidades and any(i.get("evidencia") for i in identidades)
     hay_documentos_se_con_datos = documentos_se and any(d.get("evidencia") for d in documentos_se)
     hay_biometricos_con_datos = biometricos and any(b.get("evidencia") for b in biometricos)
+    hay_declaraciones_con_datos = declaraciones and any(d.get("evidencia") for d in declaraciones)
 
-    if not evidencias and not hay_identidades_con_datos and not hay_documentos_se_con_datos and not hay_biometricos_con_datos:
+    if (
+        not evidencias
+        and not hay_identidades_con_datos
+        and not hay_documentos_se_con_datos
+        and not hay_biometricos_con_datos
+        and not hay_declaraciones_con_datos
+    ):
         return _set_first_t_text(pages_value_tpl, f"Pgs. {paginas_fallback}")
 
     blank = _set_first_t_text(pages_value_tpl, "")
@@ -456,7 +524,7 @@ def build_pages_cell_content(
             blocks.append(_build_form_of_identity_pages(identidades or _identidades_por_defecto()))
             continue
         if cat == "supplemental_evidence":
-            blocks.append(_build_supplemental_evidence_pages(documentos_se or _documentos_se_por_defecto()))
+            blocks.append(_build_supplemental_evidence_pages(documentos_se or _documentos_se_por_defecto(), declaraciones))
             continue
         frag_names = CATEGORY_FRAGMENTS[cat]
         items_by_frag_index = {item["frag_index"]: item for item in ITEMS_POR_CATEGORIA.get(cat, [])}
@@ -519,6 +587,7 @@ def build_exhibit_table(tab_groups: list[dict], plural: bool = False) -> str:
             tg.get("biometricos"),
             tg.get("identidades"),
             tg.get("documentos_se"),
+            tg.get("declaraciones"),
         )
         pages_xml = build_pages_cell_content(
             tg["categorias"],
@@ -527,6 +596,7 @@ def build_exhibit_table(tab_groups: list[dict], plural: bool = False) -> str:
             tg.get("identidades"),
             tg.get("documentos_se"),
             tg.get("biometricos"),
+            tg.get("declaraciones"),
         )
         row = (
             "<w:tr>"
