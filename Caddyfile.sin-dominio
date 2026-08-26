@@ -1,0 +1,16 @@
+# Variante de Caddyfile para probar por IP ANTES de tener un dominio
+# apuntando al servidor (Caddy no puede pedir un certificado Let's Encrypt
+# sin un dominio real). Sirve por HTTP plano en el puerto 80 — solo para
+# pruebas iniciales, no dejar así en uso real con datos de clientes.
+#
+# Uso: copiar este archivo sobre Caddyfile temporalmente
+#   (o `docker compose -f docker-compose.yml up` apuntando CADDYFILE=... )
+# y una vez que el dominio ya resuelva, volver al Caddyfile normal (HTTPS).
+
+:80 {
+	reverse_proxy app:5000
+	encode gzip
+	request_body {
+		max_size 200MB
+	}
+}

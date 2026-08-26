@@ -9,14 +9,18 @@ Uso:
 from __future__ import annotations
 
 import json
+import os
 import re
+import secrets
 import traceback
 import uuid
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_file, send_from_directory
+from flask import Flask, jsonify, redirect, request, send_file, send_from_directory, session
+
 from werkzeug.utils import secure_filename
 
+from motor import auth
 from motor.case_store import CASE_STORE_DIR, list_cases, load_case, next_tab_letra, save_case, siguiente_pagina
 from motor.exhibit_builder import (
     CATEGORY_ORDER,
@@ -56,6 +60,62 @@ EVIDENCIA_DIR.mkdir(parents=True, exist_ok=True)
 _EVIDENCIAS: dict[str, dict] = {}
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
+
+# SECRET_KEY firma la cookie de sesión del login — en producción (Docker) se
+# fija por variable de entorno (ver docker-compose.yml) para que la sesión
+# sobreviva a un redeploy del contenedor; en uso local (`python app.py`)
+# genera una al vuelo, total no hay usuarios reales fuera de localhost.
+app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+
+# Rutas accesibles SIN login — la propia pantalla de login (+ su endpoint de
+# API), assets estáticos, y el health check que usa el reverse proxy/orquestador.
+_RUTAS_PUBLICAS = {"login", "api_login", "static", "healthz"}
+
+
+@app.before_request
+def _exigir_login():
+    if request.endpoint is None:
+        return None
+    if request.endpoint in _RUTAS_PUBLICAS or request.endpoint.startswith("static"):
+        return None
+    if session.get("usuario"):
+        return None
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "No autenticado"}), 401
+    return redirect("/login")
+
+
+@app.get("/healthz")
+def healthz():
+    return jsonify({"ok": True})
+
+
+@app.get("/login")
+def login():
+    if session.get("usuario"):
+        return redirect("/")
+    return send_from_directory(BASE_DIR / "static", "login.html")
+
+
+@app.post("/api/login")
+def api_login():
+    body = request.get_json(force=True, silent=True) or {}
+    usuario = str(body.get("usuario", "")).strip()
+    password = str(body.get("password", ""))
+    info = auth.verify_login(usuario, password)
+    if info is None:
+        return jsonify({"error": "Usuario o contraseña incorrectos"}), 401
+    session.clear()
+    session["usuario"] = info["usuario"]
+    session["nombre"] = info["nombre"]
+    session.permanent = True
+    return jsonify({"usuario": info["usuario"], "nombre": info["nombre"]})
+
+
+@app.post("/api/logout")
+def api_logout():
+    session.clear()
+    return jsonify({"ok": True})
 
 
 def _catalogos() -> dict:
@@ -145,6 +205,7 @@ def como_funciona():
 def api_init():
     return jsonify(
         {
+            "usuario": {"usuario": session.get("usuario"), "nombre": session.get("nombre")},
             "catalogos": _catalogos(),
             "plantillas": _registro_plantillas()["plantillas"],
             "casos": list_cases(),
@@ -443,6 +504,11 @@ def api_generar():
             "pdf_generado": True,
             "evidencia_fusionada": False,
         }
+        auth.registrar_auditoria(
+            session.get("usuario", "?"),
+            "generar_documento",
+            {"case_id": case_id, "template_id": document_instance.get("template_id"), "archivos": [documento["pdf_url"]]},
+        )
         return jsonify({"documentos": [documento], "siguiente_pagina": case.get("siguiente_pagina", 1)})
 
     exhibits = document_instance.get("exhibits") or []
@@ -580,6 +646,15 @@ def api_generar():
 
         documentos.append(entry)
 
+    auth.registrar_auditoria(
+        session.get("usuario", "?"),
+        "generar_documento",
+        {
+            "case_id": case_id,
+            "template_id": document_instance.get("template_id"),
+            "archivos": [d["docx_url"] or d["pdf_url"] for d in documentos],
+        },
+    )
     return jsonify({"documentos": documentos, "siguiente_pagina": case.get("siguiente_pagina", 1)})
 
 
@@ -609,10 +684,15 @@ def _limpiar_evidencia_huerfana() -> None:
                 pass
 
 
+# Corre siempre al cargar el módulo (no solo bajo `python app.py`) para que
+# también se ejecute cuando gunicorn importa `app:app` en producción — un
+# proceso de gunicorn se reinicia en cada redeploy igual que uno local, y
+# sin esto la evidencia huérfana nunca se limpiaría en el servidor.
+_limpiar_evidencia_huerfana()
+
 if __name__ == "__main__":
     import webbrowser
     from threading import Timer
 
-    _limpiar_evidencia_huerfana()
     Timer(1.0, lambda: webbrowser.open("http://127.0.0.1:5000")).start()
     app.run(host="127.0.0.1", port=5000, debug=False)

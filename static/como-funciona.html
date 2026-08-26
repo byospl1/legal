@@ -20,6 +20,7 @@
     <nav class="topnav">
       <a href="/">Inicio</a>
       <a href="/como-funciona" class="active">Cómo funciona</a>
+      <a href="#" id="logout-link">Cerrar sesión</a>
     </nav>
   </div>
 </div>
@@ -165,6 +166,14 @@
 <footer class="app-footer">
   Kostiv Cardinal International Law Group Corp. · Sistema interno de llenado de Tabs — uso exclusivo del despacho
 </footer>
+
+<script>
+document.getElementById("logout-link").addEventListener("click", async (ev) => {
+  ev.preventDefault();
+  await fetch("/api/logout", { method: "POST" });
+  window.location.href = "/login";
+});
+</script>
 
 </body>
 </html>

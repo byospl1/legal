@@ -14,6 +14,10 @@ const $ = (sel) => document.querySelector(sel);
 
 async function api(path, options) {
   const res = await fetch(path, options);
+  if (res.status === 401) {
+    window.location.href = "/login";
+    throw new Error("Sesión expirada");
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
   return data;
@@ -111,6 +115,16 @@ async function init() {
   TIPOS_DOCUMENTO_IDENTIDAD = data.tipos_documento_identidad || TIPOS_DOCUMENTO_IDENTIDAD;
   TIPOS_SUPPLEMENTAL_EVIDENCE = data.tipos_supplemental_evidence || TIPOS_SUPPLEMENTAL_EVIDENCE;
   TIPOS_DOCUMENTO_PERSONA_SE = data.tipos_documento_persona_se || TIPOS_DOCUMENTO_PERSONA_SE;
+
+  const logoutLink = $("#logout-link");
+  if (logoutLink) {
+    if (data.usuario && data.usuario.nombre) logoutLink.textContent = `Cerrar sesión (${data.usuario.nombre})`;
+    logoutLink.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      await fetch("/api/logout", { method: "POST" });
+      window.location.href = "/login";
+    });
+  }
 
   fillDatalist("dlCorteSede", CATALOGOS.corte_sede);
   fillDatalist("dlJuez", CATALOGOS.juez);

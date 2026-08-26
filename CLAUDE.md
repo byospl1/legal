@@ -1739,3 +1739,180 @@ correcciones de robustez, código muerto y una suite de tests. Lo corregido:
 - **Estado global + Flask multihilo.** Condición de carrera solo teórica con
   dos pestañas simultáneas; es una herramienta local monousuario. Un lock
   agregaría complejidad para ~cero beneficio real. Se deja anotado.
+  **Actualización 2026-08-26**: con el despliegue en la nube (ver sección
+  de abajo) esto deja de ser 100% teórico — varios abogados/paralegales
+  del despacho pueden entrar a la vez desde la misma VM. Aun así, no se
+  tocó a propósito: `_EVIDENCIAS` en memoria es por-proceso pero cada
+  request de un usuario distinto solo pisa SUS PROPIOS PDFs subidos (los
+  ids son `uuid4`, no colisionan entre usuarios), y `case_store` escribe
+  un archivo por caso — dos personas editando el MISMO caso a la vez
+  todavía podría pisarse una corrida a la otra, pero es un escenario de
+  uso raro (un caso lo lleva una sola persona a la vez en la práctica del
+  despacho) y agregar locking sigue sin justificarse sin que el despacho
+  reporte un choque real.
+
+## Despliegue en la nube (2026-08-26)
+
+A pedido del usuario, el proyecto pasó de "solo corre en una laptop local"
+a poder correr en un servidor propio accesible desde internet, con login
+por usuario. Todo el código de infraestructura vive en el repo desde esta
+sesión; lo que NO se pudo hacer desde acá (crear cuentas, DNS, secrets) está
+documentado paso a paso en `DEPLOY.md` — ese archivo es la referencia para
+completar el despliegue real, no lo repito acá.
+
+### Decisión de hosting: Oracle Cloud "Always Free"
+
+Se evaluaron Render/Railway/Fly.io — hoy ninguno da una VM realmente
+gratis con disco persistente y sin apagarse por inactividad (piden tarjeta
+o borran el filesystem en cada redeploy). Oracle Cloud sí tiene un tier
+"Always Free" real: una VM ARM persistente, gratis para siempre. Es la
+única opción viable si el requisito es "gratis" en sentido estricto — el
+tradeoff es que el signup a veces reporta "sin capacidad" en la región
+elegida (hay que reintentar/cambiar de región, es un problema conocido de
+Oracle). Alternativa de respaldo si Oracle no funciona: un VPS barato
+(Hetzner/DigitalOcean, ~$4-6/mes) con el mismo `docker-compose.yml` — no
+requiere cambiar nada del código, solo el paso 1 de `DEPLOY.md`.
+
+### Login individual por usuario — `motor/auth.py`
+
+- Mismo patrón que `case_store.py`: JSON simple (`usuarios/usuarios.json`,
+  gitignored — son credenciales, no código, igual criterio que
+  `case_store/*.json`), sin base de datos ni dependencias nuevas
+  (`werkzeug.security` ya viene con Flask, no se agregó Flask-Login a
+  propósito — con `session` de Flask + un decorator/`before_request`
+  alcanza y hay menos que aprender/mantener).
+- `app.py`: `@app.before_request` (`_exigir_login`) protege TODAS las
+  rutas salvo `_RUTAS_PUBLICAS = {"login", "api_login", "static",
+  "healthz"}` — si se agrega una ruta nueva que deba ser pública (poco
+  común), hay que sumarla ahí explícitamente; el default es "requiere
+  login", no al revés. Una request a `/api/*` sin sesión devuelve 401 JSON
+  (el frontend, en `api()` de `app.js`, redirige solo a `/login` al ver un
+  401 — así una sesión expirada no deja a alguien mirando errores en
+  consola sin saber qué pasó); una request a una página HTML sin sesión
+  redirige 302 a `/login`.
+- **Bug encontrado y corregido durante la prueba manual de este mismo
+  cambio**: `_RUTAS_PUBLICAS` inicialmente solo tenía `"login"` (el nombre
+  de la función de la página HTML) pero NO `"api_login"` (el endpoint del
+  POST que valida credenciales) — el propio `before_request` bloqueaba el
+  login con 401 antes de que pudiera validar nada. Se detectó de
+  inmediato con una prueba end-to-end real (`curl` con cookies) antes de
+  entregar, no quedó en el código.
+- `scripts/manage_users.py`: CLI para crear/listar/borrar usuarios y
+  cambiar contraseñas, corrido en el servidor (`docker compose exec app
+  python3 scripts/manage_users.py create ...`). **A propósito no hay UI de
+  administración de usuarios** — no se pidió, y el manejo por CLI es
+  suficiente para un despacho chico. Si se pide una UI más adelante, que
+  llame a las funciones de `motor/auth.py`, no duplicar la lógica de
+  hasheo/verificación.
+- Auditoría mínima: `auth.registrar_auditoria(usuario, evento, detalle)`
+  agrega una línea a `case_store/_audit.log` (JSON lines, append-only,
+  gitignored — tiene IDs de casos reales) cada vez que `/api/generar`
+  produce un documento (para ambas ramas: plantillas PDF-form y las
+  demás). Nunca lanza excepción (un fallo de auditoría no debe bloquear
+  la generación real) — ver `_limpiar_evidencia_huerfana`-style de
+  robustez ya usado en el resto del proyecto.
+- `static/login.html`: página nueva, mismo estilo visual (clases
+  `.panel`/`.brand-mark` de `styles.css`) que el resto de `static/` — sin
+  build step, JS plano inline. `index.html`/`como-funciona.html` ganaron
+  un link "Cerrar sesión (nombre)" en el `topnav`, poblado desde
+  `/api/init` → `data.usuario`.
+- Verificado end-to-end con `curl` real (no solo unit tests): sin cookie
+  → 401/302; login con password mala → 401; login correcto → cookie +
+  200; con cookie → accede; logout → cookie inválida, vuelve a 401. Suite
+  `tests/run_tests.py` sigue en 15/15 (el login no la toca, son módulos
+  independientes).
+
+### Docker — `Dockerfile` / `requirements-server.txt` / `.dockerignore`
+
+- Imagen `python:3.11-slim` + `libreoffice` (headless, resuelve la
+  conversión .docx→PDF que en ESTE sandbox de desarrollo está rota — en
+  producción si funciona) + `fonts-liberation`/`fonts-liberation2`/
+  `fonts-crosextra-carlito` (sustitutos métricos de Times New
+  Roman/Arial/Calibri — sin fuentes correctas, LibreOffice re-wrappea el
+  texto con otra fuente y rompe el layout calibrado a mano, ver
+  `_estimar_lineas_visuales` más arriba en este archivo) + `gunicorn`
+  (servidor WSGI real, reemplaza `app.run()` que Flask mismo advierte que
+  es solo para desarrollo).
+- `requirements-server.txt` (aparte de `requirements.txt`): agrega
+  `gunicorn`, que no se necesita ni se usa en el flujo local de Windows
+  (`python app.py` vía `iniciar.bat`) — se separó para no ensuciar esa
+  instalación con un paquete que nunca corre ahí.
+- **`_limpiar_evidencia_huerfana()` se movió de adentro de `if __name__ ==
+  "__main__":` a nivel de módulo** (corre siempre que se importa
+  `app.py`, no solo con `python app.py` directo) — bug que se hubiera
+  colado silenciosamente: gunicorn importa `app:app`, nunca ejecuta el
+  bloque `__main__`, así que en producción esa limpieza jamás habría
+  corrido y `output/_evidencia` habría crecido sin límite en cada
+  redeploy. El `webbrowser.open(...)` (que no tiene sentido en un
+  servidor sin pantalla) se dejó adentro de `__main__`, sí correctamente
+  gateado.
+- `case_store/`, `output/`, `usuarios/`, `firmas/` NUNCA viven dentro de
+  la imagen — son volúmenes de Docker montados en tiempo de ejecución (ver
+  `docker-compose.yml`), para que sobrevivan a un `docker compose up
+  --build`. `.dockerignore` replica las mismas exclusiones de
+  `.gitignore` (datos de clientes, credenciales, firmas escaneadas) para
+  que ni siquiera entren al contexto de build.
+
+### `docker-compose.yml` + `Caddyfile` (HTTPS automático)
+
+- Dos servicios: `app` (la imagen de arriba) y `caddy` (reverse proxy,
+  pide y renueva el certificado Let's Encrypt solo — no hay que tocar
+  certbot/nginx a mano). `caddy` es el único que expone 80/443 al
+  exterior; `app` solo se expone internamente (`expose`, no `ports`).
+- `Caddyfile` usa `{$DOMAIN}` (variable de entorno) — sin un dominio real
+  apuntando a la VM, Caddy no puede pedir el certificado. `Caddyfile.sin-
+  dominio` es una variante HTTP-plano-por-IP solo para probar mientras el
+  DNS todavía no propaga (instrucciones en `DEPLOY.md`) — no dejar así en
+  uso real con datos de clientes.
+- `.env.example` documenta las dos variables que hacen falta
+  (`SECRET_KEY`, `DOMAIN`) — `.env` real está gitignored.
+
+### GitHub Actions — `.github/workflows/deploy.yml`
+
+- En cada push a `main`: SSH a la VM, `git fetch` + `git reset --hard
+  origin/main` + `docker compose up -d --build`. Sin registro de imágenes
+  (no hace falta con un solo servidor) — el build de Docker corre en la
+  propia VM. Requiere 3 secrets en GitHub (`DEPLOY_HOST`, `DEPLOY_USER`,
+  `DEPLOY_SSH_KEY`), ver `DEPLOY.md`.
+- **El `git reset --hard` en la VM es deliberado y hay que respetarlo**:
+  el clon de `~/legal` en el servidor es un DESTINO de despliegue, nunca
+  un lugar para editar código a mano — cualquier cambio local ahí se
+  pierde en el próximo push a `main`. Si alguna vez hace falta un hotfix
+  urgente directo en el servidor, hay que mergearlo a `main` después o el
+  siguiente deploy automático lo revierte sin avisar.
+
+### Backups — `scripts/backup.sh` (restic + Backblaze B2)
+
+- Con una sola VM sin base de datos administrada, un backup cifrado
+  aparte es la única red de seguridad real ante un disco corrupto o un
+  `docker volume rm` accidental. Se eligió `restic` (un solo binario,
+  cifra y deduplica solo, soporte nativo para B2) en vez de armar
+  tar+gpg+rclone a mano — menos piezas que puedan fallar.
+- Respalda directo los volúmenes de Docker desde disco
+  (`/var/lib/docker/volumes/legal_*_data/_data`) sin parar los
+  contenedores — son archivos JSON/PNG estáticos, sin riesgo de leer un
+  archivo a medio escribir en el momento exacto del backup (el patrón de
+  escritura del proyecto es siempre "escribir el JSON completo de una",
+  ver `case_store.save_case`, nunca updates parciales in-place).
+  Retención 14 diarios / 8 semanales / 6 mensuales.
+- Credenciales (`RESTIC_PASSWORD`, claves de B2) viven en
+  `/root/.restic-env` en la VM, fuera de git — `scripts/backup.sh` no las
+  hardcodea en ningún lado. **`RESTIC_PASSWORD` hay que guardarla aparte
+  en un lugar seguro** (gestor de contraseñas del despacho) — sin ella el
+  backup cifrado es irrecuperable, ni Backblaze puede abrirlo.
+- Pensado para cron diario (ver línea exacta en `DEPLOY.md`), no se
+  automatizó la creación del cron job desde acá — es un paso manual del
+  usuario en la VM real (`DEPLOY.md`, sección 10).
+
+### Qué falta para que esto quede realmente andando
+
+Todo el código está listo y probado localmente (auth end-to-end con curl,
+suite completa 15/15), pero **nada de esto se pudo probar en un servidor
+real desde este sandbox** — no hay forma de crear una cuenta de Oracle
+Cloud, apuntar un DNS, o correr Docker con LibreOffice real desde acá. Los
+puntos de `DEPLOY.md` (crear la VM, instalar Docker, dominio, `.env`,
+primer usuario, secrets de GitHub, backups) son 100% manuales y quedan
+pendientes de que el despacho los ejecute. Si algo de `DEPLOY.md` no
+coincide con la UI real de Oracle/GitHub/Backblaze al momento de seguirlo
+(cambian seguido), avisar con una captura para ajustar la guía en vez de
+improvisar un paso distinto.
