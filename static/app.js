@@ -506,7 +506,8 @@ async function addTabRow() {
     <div class="documentos-se-tab" style="margin-top:10px;"></div>
   `;
   $("#tabsList").appendChild(div);
-  div._identidadesEvidencia = {};
+  div._identidadesEvidencia = {}; // { personaKey: [{ id, tipo_doc, evidencia_id, num_paginas }, ...] } — más de un documento por persona
+  div._identidadesCounter = 0;
   div._biometricosEvidencia = {};
   div._documentosSE = []; // [{ id, tipo, titulo, evidencia_id, num_paginas }]
   div._documentosSECounter = 0;
@@ -546,12 +547,16 @@ function personasDelCaso() {
 }
 
 /** Reconstruye las filas "tipo de documento + archivo" de Form of
- * Identity, una por persona del caso (líder + cada rider) — sin perder
- * los archivos ya subidos para personas que sigan en la lista. */
+ * Identity, agrupadas por persona del caso (líder + cada rider) — cada
+ * persona puede tener MÁS DE UN documento (ej. el líder sube pasaporte
+ * Y ID), con "+ Agregar documento" por persona, mismo patrón que
+ * renderDocumentosSE (Supplemental Evidence). Sin perder los documentos
+ * ya subidos para personas que sigan en la lista. */
 function renderIdentidadesUploads(card) {
   const cont = card.querySelector(".identidades-tab");
   const categorias = categoriasMarcadas(card);
   card._identidadesEvidencia = card._identidadesEvidencia || {};
+  card._identidadesCounter = card._identidadesCounter || 0;
 
   if (!categorias.includes("form_of_identity")) {
     cont.innerHTML = "";
@@ -563,40 +568,104 @@ function renderIdentidadesUploads(card) {
   for (const key of Object.keys(card._identidadesEvidencia)) {
     if (!keysActivos.has(key)) delete card._identidadesEvidencia[key];
   }
+  for (const p of personas) {
+    if (!card._identidadesEvidencia[p.key] || card._identidadesEvidencia[p.key].length === 0) {
+      card._identidadesEvidencia[p.key] = [_nuevoDocIdentidad(card)];
+    }
+  }
 
   cont.innerHTML =
-    `<label style="font-size:13px; font-weight:600; color:var(--text-dim);">Documento de identidad por persona (pasaporte, certificado de nacimiento o ID — uno por cada aplicante del caso)</label>` +
+    `<label style="font-size:13px; font-weight:600; color:var(--text-dim);">Documento(s) de identidad por persona (pasaporte, certificado de nacimiento o ID — se puede agregar más de uno por persona, ej. pasaporte + ID)</label>` +
     personas
-      .map(
-        (p) => `
-      <div class="grid" style="margin-top:6px;">
-        <div class="field">
-          <label style="font-weight:400;">${escapeHtml(p.label)} — tipo de documento</label>
-          <select class="identidad-tipo-doc" data-persona-key="${p.key}">
-            ${TIPOS_DOCUMENTO_IDENTIDAD.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join("")}
-          </select>
+      .map((p) => {
+        const docs = card._identidadesEvidencia[p.key] || [];
+        return `
+      <div class="identidad-persona-block" style="margin-top:8px;">
+        <div class="row" style="justify-content:space-between; align-items:center;">
+          <span class="muted" style="font-size:13px;">${escapeHtml(p.label)}</span>
+          <button type="button" class="btn-agregar-identidad" data-persona-key="${p.key}">+ Agregar documento</button>
         </div>
-        <div class="field">
-          <label style="font-weight:400;">Archivo (PDF)</label>
-          <input type="file" class="identidad-upload-input" data-persona-key="${p.key}" accept="application/pdf">
-          <span class="muted identidad-upload-status" data-persona-key="${p.key}"></span>
+        ${docs
+          .map(
+            (doc) => `
+        <div class="grid identidad-doc-row" data-doc-id="${doc.id}" style="margin-top:6px;">
+          <div class="field">
+            <label style="font-weight:400;">Tipo de documento</label>
+            <select class="identidad-tipo-doc" data-doc-id="${doc.id}">
+              ${TIPOS_DOCUMENTO_IDENTIDAD.map(
+                (t) => `<option value="${escapeHtml(t)}" ${t === doc.tipo_doc ? "selected" : ""}>${escapeHtml(t)}</option>`
+              ).join("")}
+            </select>
+          </div>
+          <div class="field">
+            <label style="font-weight:400;">Archivo (PDF)</label>
+            <input type="file" class="identidad-upload-input" data-doc-id="${doc.id}" accept="application/pdf">
+            <span class="muted identidad-upload-status" data-doc-id="${doc.id}"></span>
+          </div>
         </div>
-      </div>`
-      )
+        ${
+          docs.length > 1
+            ? `<button type="button" class="danger identidad-quitar" data-persona-key="${p.key}" data-doc-id="${doc.id}" style="margin-top:4px;">Quitar documento</button>`
+            : ""
+        }`
+          )
+          .join("")}
+      </div>`;
+      })
       .join("");
 
+  for (const btn of cont.querySelectorAll(".btn-agregar-identidad")) {
+    btn.addEventListener("click", () => {
+      const key = btn.dataset.personaKey;
+      card._identidadesEvidencia[key] = card._identidadesEvidencia[key] || [];
+      card._identidadesEvidencia[key].push(_nuevoDocIdentidad(card));
+      renderIdentidadesUploads(card);
+      recalcularPaginas();
+    });
+  }
+  for (const sel of cont.querySelectorAll(".identidad-tipo-doc")) {
+    sel.addEventListener("change", () => {
+      const doc = _buscarDocIdentidad(card, sel.dataset.docId);
+      if (doc) doc.tipo_doc = sel.value;
+    });
+  }
   for (const input of cont.querySelectorAll(".identidad-upload-input")) {
     input.addEventListener("change", () => onIdentidadUpload(card, input));
   }
+  for (const btn of cont.querySelectorAll(".identidad-quitar")) {
+    btn.addEventListener("click", () => {
+      const key = btn.dataset.personaKey;
+      card._identidadesEvidencia[key] = (card._identidadesEvidencia[key] || []).filter(
+        (d) => d.id !== btn.dataset.docId
+      );
+      renderIdentidadesUploads(card);
+      recalcularPaginas();
+    });
+  }
+}
+
+function _nuevoDocIdentidad(card) {
+  card._identidadesCounter = (card._identidadesCounter || 0) + 1;
+  return { id: `id_${card.dataset.n}_${card._identidadesCounter}`, tipo_doc: "Passport", evidencia_id: null, num_paginas: null };
+}
+
+function _buscarDocIdentidad(card, docId) {
+  for (const docs of Object.values(card._identidadesEvidencia || {})) {
+    const found = docs.find((d) => d.id === docId);
+    if (found) return found;
+  }
+  return null;
 }
 
 async function onIdentidadUpload(card, input) {
-  const key = input.dataset.personaKey;
-  const statusEl = card.querySelector(`.identidad-upload-status[data-persona-key="${key}"]`);
+  const docId = input.dataset.docId;
+  const statusEl = card.querySelector(`.identidad-upload-status[data-doc-id="${docId}"]`);
+  const doc = _buscarDocIdentidad(card, docId);
   const file = input.files[0];
-  card._identidadesEvidencia = card._identidadesEvidencia || {};
+  if (!doc) return;
   if (!file) {
-    delete card._identidadesEvidencia[key];
+    doc.evidencia_id = null;
+    doc.num_paginas = null;
     statusEl.textContent = "";
     recalcularPaginas();
     return;
@@ -609,13 +678,15 @@ async function onIdentidadUpload(card, input) {
     const res = await fetch("/api/evidencia", { method: "POST", body: formData });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Error al subir el archivo");
-    card._identidadesEvidencia[key] = { evidencia_id: data.evidencia_id, num_paginas: data.num_paginas };
+    doc.evidencia_id = data.evidencia_id;
+    doc.num_paginas = data.num_paginas;
     statusEl.textContent = `${data.num_paginas} página(s).`;
     recalcularPaginas();
   } catch (e) {
     statusEl.textContent = "Error: " + e.message;
     input.value = "";
-    delete card._identidadesEvidencia[key];
+    doc.evidencia_id = null;
+    doc.num_paginas = null;
   }
 }
 
@@ -938,14 +1009,15 @@ function recalcularPaginas() {
       if (!categorias.includes(cat)) continue;
       if (cat === "form_of_identity") {
         for (const persona of personasDelCaso()) {
-          const info = (card._identidadesEvidencia || {})[persona.key];
-          const statusEl = card.querySelector(`.identidad-upload-status[data-persona-key="${persona.key}"]`);
-          if (!info) continue;
-          huboDocumento = true;
-          if (inicioTab === null) inicioTab = pagina;
-          const inicioDoc = pagina;
-          pagina += info.num_paginas;
-          if (statusEl) statusEl.textContent = `${info.num_paginas} página(s) — empieza en la página ${inicioDoc}.`;
+          for (const doc of (card._identidadesEvidencia || {})[persona.key] || []) {
+            const statusEl = card.querySelector(`.identidad-upload-status[data-doc-id="${doc.id}"]`);
+            if (!doc.evidencia_id) continue;
+            huboDocumento = true;
+            if (inicioTab === null) inicioTab = pagina;
+            const inicioDoc = pagina;
+            pagina += doc.num_paginas;
+            if (statusEl) statusEl.textContent = `${doc.num_paginas} página(s) — empieza en la página ${inicioDoc}.`;
+          }
         }
         continue;
       }
@@ -1050,15 +1122,13 @@ function collectExhibits() {
       evidencias[key] = info.evidencia_id;
     }
     const identidades = categorias.includes("form_of_identity")
-      ? personasDelCaso().map((p) => {
-          const tipoDocSel = card.querySelector(`.identidad-tipo-doc[data-persona-key="${p.key}"]`);
-          const info = (card._identidadesEvidencia || {})[p.key];
-          return {
+      ? personasDelCaso().flatMap((p) =>
+          ((card._identidadesEvidencia || {})[p.key] || []).map((doc) => ({
             persona_nombre: p.nombre,
-            tipo_doc: tipoDocSel ? tipoDocSel.value : "Passport",
-            evidencia_id: info ? info.evidencia_id : null,
-          };
-        })
+            tipo_doc: doc.tipo_doc,
+            evidencia_id: doc.evidencia_id,
+          }))
+        )
       : [];
     const documentos_se = categorias.includes("supplemental_evidence")
       ? (card._documentosSE || []).map((doc) => ({

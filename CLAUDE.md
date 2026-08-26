@@ -878,6 +878,64 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   adjunto, y que en modo completamente manual (nada subido en ningún
   lado) se sigue exigiendo la fecha de todas las personas, sin cambios.
 
+## Form of Identity: ahora permite más de un documento por persona (2026-08-26)
+
+- **Pedido del usuario**: en el Tab de Form of Identity, permitir que una
+  misma persona (líder o rider) suba más de un documento de identidad —
+  ejemplo dado: el líder tiene pasaporte Y ID, y ambos deben aparecer en
+  la tabla de exhibits, no solo uno.
+- **El backend (`motor/exhibit_builder.py`) ya soportaba esto sin tocar
+  nada**: `_build_form_of_identity_description`/`_build_form_of_identity_pages`
+  siempre iteraron sobre una lista plana `identidades` sin asumir un
+  máximo de una entrada por persona — dos entradas con el mismo
+  `persona_nombre` (ej. `None`/`None` para el líder) ya generaban dos
+  renglones "Respondent's Passport from {país}" / "Respondent's ID from
+  {país}" perfectamente alineados con PAGES. Mismo caso para
+  `app.py._resolver_paginas_evidencia` (resuelve páginas iterando la
+  lista plana, sin importar cuántas entradas comparten persona). Se
+  verificó con una prueba manual (líder con 2 documentos + rider con 1)
+  antes de tocar el frontend, para confirmar que el trabajo real estaba
+  del lado de la UI.
+- **El límite estaba 100% en `static/app.js`**: `renderIdentidadesUploads`
+  generaba exactamente UNA fila (tipo de documento + archivo) por persona
+  de `personasDelCaso()`, con el estado guardado en
+  `card._identidadesEvidencia` como `{personaKey: {evidencia_id,
+  num_paginas}}` — un solo documento posible por persona, sin manera de
+  agregar un segundo.
+- Fix: `card._identidadesEvidencia` pasó a ser `{personaKey: [{id,
+  tipo_doc, evidencia_id, num_paginas}, ...]}` — una LISTA por persona en
+  vez de un objeto único, clonando el patrón que ya usaba
+  `_documentosSE`/`renderDocumentosSE` (Supplemental Evidence) para
+  agregar/quitar documentos dinámicamente: cada persona ahora tiene su
+  propio botón "+ Agregar documento" y, si tiene más de uno, un botón
+  "Quitar documento" por fila (con al menos 1 fila siempre presente, no
+  se puede dejar a una persona en cero documentos). Nuevos helpers
+  `_nuevoDocIdentidad(card)` (genera `id` único tipo `id_<n>_<contador>`,
+  mismo patrón que `se_<n>_<contador>` de Supplemental Evidence) y
+  `_buscarDocIdentidad(card, docId)` (busca un documento por su `id` en
+  todas las personas, usado por los listeners de tipo/archivo). El tipo
+  de documento y el `evidencia_id`/`num_paginas` ahora se leen del propio
+  objeto en `card._identidadesEvidencia` (actualizado directo por los
+  listeners de `change`), no de un `<select>` consultado al vuelo en
+  `collectExhibits()` — mismo patrón que ya usaba `_documentosSE`.
+- `recalcularPaginas()` y `collectExhibits()` actualizados para recorrer
+  la lista de documentos de cada persona (antes esperaban un único
+  objeto/valor por persona) — `collectExhibits()` ahora usa
+  `personasDelCaso().flatMap(...)` para aplanar persona × documentos en
+  la lista `identidades` plana que ya espera el backend.
+- Verificado: `motor.exhibit_builder.build_description_cell_content`/
+  `build_pages_cell_content` con líder (pasaporte + ID) + rider
+  (pasaporte) real produce 4 párrafos alineados 1 a 1 en DESCRIPTION y
+  PAGES, con los textos "Respondent's Passport from Mexico",
+  "Respondent's ID from Mexico" y "Rider's Ana Rider Passport from
+  Mexico" en el orden correcto. Suite `tests/run_tests.py` sigue en
+  10/10 (no cubre este escenario puntual, pero confirma que no se rompió
+  nada existente). `node --check static/app.js` sin errores de sintaxis.
+  **No se pudo probar el flujo completo en un navegador real** (no hay UI
+  interactiva en este sandbox) — si al usarlo en la máquina del despacho
+  algo no se ve bien (botones, alineación de las filas), avisar con el
+  detalle exacto.
+
 ## Plantilla `written-pleadings` — creada desde un documento YA LLENADO, sin SDT de fábrica (2026-08-25)
 
 - **Punto de partida distinto a todas las demás plantillas**: el usuario
