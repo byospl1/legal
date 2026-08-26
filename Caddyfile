@@ -1,0 +1,17 @@
+{$DOMAIN} {
+	# Caddy obtiene y renueva el certificado TLS solo (Let's Encrypt) — no
+	# hace falta configurar nada más para HTTPS. Si DOMAIN no resuelve
+	# todavía (ej. mientras se propaga el DNS), esta directiva falla al
+	# arrancar; usar Caddyfile.sin-dominio (ver DEPLOY.md) para probar por
+	# IP mientras tanto.
+	reverse_proxy app:5000
+
+	encode gzip
+
+	# Los PDFs/DOCX generados pueden ser grandes con mucha evidencia
+	# adjunta (decenas de páginas escaneadas) — sin esto Caddy corta la
+	# subida de evidencia en Tabs grandes.
+	request_body {
+		max_size 200MB
+	}
+}

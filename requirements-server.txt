@@ -1,0 +1,7 @@
+# Dependencias adicionales SOLO para el despliegue en servidor (Docker/Linux).
+# El requirements.txt normal sigue sirviendo tal cual para uso local en
+# Windows (instalar.bat) — gunicorn no se usa ahí (se corre con
+# `python app.py`), así que se separa en este archivo aparte para no
+# ensuciar la instalación local con un paquete que nunca se usa.
+-r requirements.txt
+gunicorn>=21

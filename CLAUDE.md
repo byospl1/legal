@@ -1,0 +1,1918 @@
+# CLAUDE.md — contexto persistente del proyecto
+
+Sistema interno (Kostiv Cardinal International Law Group Corp.) para llenar
+plantillas EOIR (Tabs de exhibits, Motions, EOIR-33) a partir de datos de
+caso capturados en una interfaz web local (Flask + JS plano, sin build
+step). Este archivo es la referencia que **siempre** debe leerse/tenerse en
+cuenta al iterar sobre tabs o motions — evita releer código para reconstruir
+reglas que ya están decididas, y evita repetir errores ya corregidos.
+
+## Errores ya corregidos — checklist rápido (NO repetir)
+
+Resumen de cada problema real que se presentó, su causa y el fix aplicado.
+Es el primer lugar a revisar antes de tocar código relacionado — cada ítem
+tiene su sección con el detalle completo más abajo en este mismo archivo.
+
+1. **Numeración de páginas propias de la plantilla.** Se agregó un footer/
+   PAGE field a `i589-tab-cover` → el usuario lo pidió revertir
+   explícitamente. Regla: **solo se numera evidencia/PDFs adjuntos**, nunca
+   portada/tabla de exhibits/dividers/Proof of Service. No volver a agregar
+   footer a ningún `.dotx`. → ver "Regla de numeración de páginas".
+2. **Número de página en la esquina equivocada en PDFs escaneados.** PDFs
+   con `/Rotate` ≠ 0 hacían que el número "abajo a la derecha" cayera en otra
+   esquina visual. Fix: `page.transfer_rotation_to_content()` (pypdf) antes
+   de calcular `width`/`height` en `motor/pdf_merge.py`. Si se toca ese
+   archivo, no quitar esa llamada. → ver "Regla de numeración de páginas".
+3. **XML mal formado al recortar runs en Motion to Withdraw.**
+   `_find_preceding_run` usaba `rfind("<w:r")`, que también matchea
+   `<w:rPr`/`<w:rFonts` (substring) y agarraba el tag equivocado. Fix: buscar
+   con dos patrones (`<w:r>` y `<w:r `), igual que `_find_enclosing_run`. →
+   ver "Motion to Withdraw: un Exhibit sin evidencia se elimina".
+4. **Punto final "invisible" al recortar el párrafo NOTICE.** Insertarlo en
+   el borde del `<w:r>` lo dejaba como texto suelto fuera de `<w:t>`, que
+   Word ignora. Fix: insertar el punto DENTRO del `<w:t>`, justo antes de
+   `</w:t>`. → misma sección que el ítem 3.
+5. **Firma de Lorenzo quemada/anclada en `i589-tab-cover`.** Imagen flotante
+   (`wp:anchor`, `allowOverlap="1"`) fija en la plantilla se podía sobreponer
+   al texto del Proof of Service. Se eliminó del `.dotx` (run + relationship
+   + `word/media/`) y se reemplazó por el mecanismo dinámico
+   (`firmas_imagen` + SDT), que inserta `wp:inline` y nunca flota. → ver
+   "Firma default de Lorenzo hardcodeada".
+6. **Firma duplicada/sobrepuesta en `webex-motion`.** La plantilla traía DOS
+   firmas ancladas quemadas (abogado + preparador) que quedaban dibujadas
+   ENCIMA de la firma dinámica nueva → salía la firma dos veces. Se
+   eliminaron ambas del `.docx`. **Regla general: ninguna plantilla debe
+   llevar firma quemada/anclada** — al agregar una plantilla nueva, revisar
+   que no traiga `wp:anchor` con imagen de firma antes de registrarla. → ver
+   "`webex-motion` traía DOS firmas ancladas quemadas".
+7. **Pluralización de "Respondent(s)" hardcodeada solo para una plantilla.**
+   Existía `_apply_plural_respondents` atada a `i589-tab-cover`. Se
+   generalizó a `field_map["plural_riders"]` (lista curada de frases
+   exactas). **No usar un `replace` genérico de "Respondent"** — hay
+   apariciones que nunca deben pluralizarse (placeholder del SDT del
+   caption, tabla Form of Identity). → ver "Pluralización 'Respondent(s)'
+   con riders".
+8. **Nombre de cliente largo rompía la firma en `webex-motion`.**
+   Alineación con `<w:tab/>` + espacios literales + `jc="both"` solo
+   funcionaba con nombres cortos de una línea; con "NOMBRE et al" la segunda
+   línea caía al margen izquierdo. Fix: sangría real de párrafo
+   (`w:ind w:left`) en vez de tabs/espacios. Si se retoca ese bloque de
+   firma a mano en Word, no reintroducir alineación manual con
+   espacios/tabs para campos de longitud variable. → ver "`webex-motion`: el
+   nombre del cliente en la firma se rompía".
+9. **Saltos de página reales rompieron el formato de `webex-motion` —
+   REVERTIDO (intento de un solo paso).** Se intentó cambiar los rellenos
+   de párrafos vacíos por `<w:pageBreakBefore/>` reales para arreglar una
+   línea huérfana, quitando el relleno viejo en el mismo cambio. El
+   usuario lo revirtió ("se arruinó el formato"). **No repetir ese cambio
+   en `webex-motion`** sin pedirlo explícitamente y validar el render real
+   en Word. Más tarde, en `written-pleadings`, la MISMA técnica funcionó
+   bien haciéndola en DOS PASOS (agregar el salto real primero, sin tocar
+   el relleno; recién después, ya confirmado por el usuario que sobraban
+   páginas en blanco, quitar el relleno redundante con cirugía quirúrgica
+   por `paraId`) — **la técnica de salto real + relleno redundante NO es
+   exclusiva de `written-pleadings`, es reutilizable en cualquier
+   plantilla con este mismo patrón** (secciones que caen en su página por
+   puro volumen de párrafos vacíos de relleno). → ver "`webex-motion`:
+   saltos de página por sección" y "Técnica general: saltos de página
+   reales reemplazando relleno de párrafos vacíos".
+10. **CC/OSAC exigía los dos años aunque solo se subiera evidencia de uno.**
+    Dos validaciones independientes (`_build_category_xml` en Python y
+    `generarDocumento()` en JS) exigían ambos años sin consultar cuál
+    subitem iba a quedar incluido. Fix: ambas consultan
+    `frag_indices_incluidos`/`tg.evidencias` antes de exigir el año. **Si se
+    toca esta lógica, mantener sincronizados frontend y backend** — son dos
+    checks independientes que deben llegar a la misma conclusión. → ver "Tab
+    de Country Conditions (CC/OSAC)".
+11. **Campo "Próxima audiencia" solo aceptaba texto ya escrito en
+    palabras.** Se agregó autoformato en frontend (`blur`, no `input`) que
+    convierte `MM/DD/AAAA HH:MM AM/PM` a `Month D, AAAA at H:MM AM/PM` si el
+    texto empieza con ese patrón numérico, dejando intacto el resto
+    (tipo/modalidad) y sin tocar nada si ya viene en palabras. → ver "Campo
+    'Próxima audiencia'".
+12. **Biometrics Compliance (por persona) recién agregado: no anexaba los
+    PDFs y dejaba Fee Receipt/FBI Fingerprint sin evidencia.** Dos bugs
+    reales, ambos porque `biometricos` vive FUERA del dict genérico
+    `evidencias`: (a) `app.py`, el gate `tiene_evidencia` que decide si se
+    llama a `_resolver_paginas_evidencia` (la función que resuelve páginas
+    Y arma la lista de PDFs a fusionar) no miraba `tg["biometricos"]` — si
+    la ÚNICA evidencia del Tab era de Biometrics Compliance, nunca se
+    fusionaba nada aunque el usuario sí hubiera subido el archivo. (b)
+    `motor/exhibit_builder.frag_indices_incluidos("fee", evidencias)` solo
+    mira el dict `evidencias` (fee_receipt/fbi_fingerprint) para decidir si
+    está en "modo manual" (incluir todo) o "modo evidencia" (incluir solo
+    lo que tiene archivo) — sin evidencia de esos dos ítems fijos, caía
+    siempre en modo manual e incluía Fee Receipt/FBI Fingerprint aunque no
+    tuvieran nada adjunto. Fix: nuevo parámetro
+    `hay_evidencia_dinamica: bool` en `frag_indices_incluidos`, que el
+    llamador setea a `True` para "fee" cuando algún `biometricos` tiene
+    evidencia — fuerza el modo evidencia (excluye los ítems fijos sin
+    archivo) aunque `evidencias` esté vacío. → ver "Bug: Biometrics
+    Compliance no anexaba evidencia".
+13. **`next_tab_letra` se quedaba pegado en "AA" después de la Z.** Faltaba
+    el acarreo del incremento base-26 (Z→AA, pero de ahí AA→AA en vez de
+    AA→AB). Fix: incremento base-26 bijectivo con acarreo real, replicado
+    en `case_store.py` y `static/app.js` (`nextTabLetra`). Solo afectaba
+    casos con 27+ exhibits. → ver "Auditoría 2026-08-25".
+14. **`_ANIO_RE` de la sugerencia de año dejaba de reconocer años ≥2040.**
+    Rango original `19[9]\d|20[0-3]\d` (1990-2039). Fix: `19[89]\d|20\d\d`
+    (1980-2099). → ver "Auditoría 2026-08-25".
+15. **Errores de datos en la tabla de exhibits (país/año/fecha faltante)
+    daban 500 genérico en vez de 400 con mensaje claro.** `api_generar` solo
+    atrapaba `FillEngineError`/`ValidationError`, no el `ValueError` que
+    lanza `exhibit_builder`. Fix: `ValueError` agregado a la tupla del 400.
+    No repetir: cualquier `raise ValueError` nuevo en `exhibit_builder` para
+    validar datos de exhibits debe llegar como 400, no como 500. → ver
+    "Auditoría 2026-08-25".
+16. **Body no-JSON en `api_save_caso`/`api_generar` tiraba 500 con
+    traceback.** Fix: `request.get_json(force=True, silent=True)` +
+    chequeo `isinstance(..., dict)` → 400 "El cuerpo de la petición no es
+    JSON válido". → ver "Auditoría 2026-08-25".
+17. **`campos_extra` de ninguna plantilla se validaban como obligatorios
+    antes de generar.** Dejar uno vacío no tiraba error — se quedaba con
+    el placeholder que haya quedado grabado en el `.docx` al construir la
+    plantilla (texto real de OTRO caso). Se detectó al construir
+    `written-pleadings` (10 `campos_extra` nuevos, alto riesgo de mezclar
+    datos entre clientes). Fix genérico en `static/app.js`
+    (`generarDocumento`): valida que todo `campos_extra` de la plantilla
+    activa tenga valor antes de armar `document_instance` — protege
+    también a `motion-withdraw-*`, que ya tenía este mismo hueco. No
+    volver a quitar esa validación. → ver "Plantilla `written-pleadings`".
+18. **Firma quemada/anclada #4 encontrada: no era del cliente, era del
+    traductor.** `written-pleadings` traía, en un cuadro de texto flotante
+    ("Certificate of Translation") que `python-docx`'s `.paragraphs` NO
+    recorre, la firma escaneada real de Bruno Briz (preparador/traductor),
+    quemada dos veces (rama moderna + rama legacy VML del mismo cuadro).
+    Un primer diagnóstico por posición aproximada del offset la atribuyó
+    al cliente — el atributo correcto se confirmó ubicando el párrafo
+    exacto que contiene cada `r:embed`. Eliminada igual que las otras 3
+    (i589-tab-cover, webex-motion x2). **Si se analiza una plantilla
+    nueva a partir de un `.docx` YA LLENADO, revisar también
+    `<w:txbxContent>` (cuadros de texto) además de `document.paragraphs`
+    — un cuadro de texto flotante puede esconder tanto texto con datos
+    reales como una firma quemada que `.paragraphs` nunca muestra.** → ver
+    "Plantilla `written-pleadings`".
+19. **`cliente_nombre` en `written-pleadings` no es un solo campo — son
+    tres.** Con el primer ejemplo (sin riders) los tres coincidían, así que
+    parecía un solo campo; un segundo ejemplo real CON riders reveló que
+    hace falta `cliente_nombre` (verbatim+"et al"), `cliente_nombre_mayus`
+    (MAYÚSCULAS+"ET AL") y `cliente_nombre_lead_mayus` (MAYÚSCULAS, nunca
+    "et al" — es la declaración personal de un solo respondent). **No
+    volver a asumir que un campo de nombre se comporta igual en todos los
+    lugares del documento solo porque un ejemplo sin riders no mostró
+    diferencia** — antes de dar por buena una plantilla nueva con
+    riders/pluralización, pedir o construir un caso de prueba CON riders.
+    → ver "`written-pleadings`: corregido contra un SEGUNDO ejemplo real
+    con riders".
+20. **"Pgs." de la 2da persona en Supplemental Evidence caía en la línea
+    envuelta de la 1ra.** El texto fijo del líder envuelve a 2 líneas
+    visuales en Word, pero PAGES reservaba 1 solo párrafo para él → el
+    "Pgs." del 2do documento aparecía junto a la 2da línea envuelta del
+    1ro (Word alinea celdas por altura acumulada, no por conteo de
+    párrafos). Confirmado con captura real. **Un primer intento con un
+    `spacer` fijo entre documentos se REVIRTIÓ** (metía una línea en blanco
+    visible no deseada y 1 línea de compensación no alcanza para 2 de
+    envolvimiento). Fix correcto: `_estimar_lineas_visuales(texto)` (métricas
+    Times-Roman de reportlab vs. ancho real de la celda) + en PAGES poner el
+    valor seguido de `(líneas-1)` párrafos `blank`; DESCRIPTION queda sin
+    separadores. **No arreglar este tipo de desalineamiento con un separador
+    fijo — usar la estimación de líneas, que es proporcional al
+    envolvimiento real.** → ver "Ajuste (2026-08-26): 'Pgs.' de la 2da
+    persona caía en la línea envuelta de la 1ra — resuelto estimando líneas
+    visuales (NO con spacer)".
+
+**Nota**: los fixes 13-16 (más limpieza de evidencia huérfana en
+`output/_evidencia` al arrancar y código muerto) están detallados con más
+contexto en "## Auditoría 2026-08-25: fixes de robustez + primera suite de
+tests" más abajo en este archivo. Esa sección también documenta qué NO se
+tocó a propósito (numeración no idempotente, alineación de Biometrics con
+wrap, condición de carrera teórica) — revisar ahí antes de "arreglar" esos
+tres puntos de nuevo.
+
+## Plantillas registradas (`plantillas/registro.json`)
+
+Fuente de verdad de qué plantillas existen. Hoy son 7 (3 de ellas variantes
+del grupo `motion-withdraw`):
+
+| template_id | tipo | tiene_tabla_exhibits |
+|---|---|---|
+| `i589-tab-cover` | Tab de exhibits (I-589) | sí |
+| `webex-motion` | MOTION | no |
+| `eoir-33-change-address` | PDF form fijo (AcroForm) | no |
+| `motion-withdraw-no-cooperation` | MOTION (variante de `motion-withdraw`) | no |
+| `motion-withdraw-cancelation` | MOTION (variante de `motion-withdraw`) | no |
+| `motion-withdraw-location-known` | MOTION (variante de `motion-withdraw`) — **BORRADOR**, ver abajo | no |
+| `written-pleadings` | Respondent's Written Pleadings (+ Declaration + Certificate of Translation) | no |
+
+Para agregar una plantilla nueva, seguir el procedimiento del `README.md`
+("Agregar una plantilla `.dotx` nueva"): `analyze_template.py` → revisar
+`field_map.json` a mano → si tiene tabla de exhibits, fragments +
+`exhibit_builder.py` → registrar en `registro.json`.
+
+### `motion-withdraw-location-known` — plantilla BORRADOR, pendiente de revisión del abogado
+
+Creada 2026-08-17 a pedido explícito del usuario, para el escenario en que
+**solo se conoce la dirección del cliente** (a diferencia de
+`motion-withdraw-no-cooperation`, que también pide un teléfono conocido). El
+texto narrativo del NOTICE (el párrafo que reemplaza "We are completely
+unaware of the whereabouts..." + el párrafo del teléfono) **lo redactó
+Claude como borrador**, no es texto validado por un abogado del despacho —
+el propio usuario pidió explícitamente "redacta tú un borrador... con la
+advertencia de que es un borrador mío, no texto validado por un abogado".
+Antes de usarla en un caso real, un abogado debe revisar/aprobar la
+redacción exacta. El `nombre` en `registro.json` incluye "(BORRADOR —
+revisar con abogado antes de usar)" a propósito — no quitar esa advertencia
+del selector sin que el despacho confirme que ya revisó el texto.
+Estructuralmente es un clon de `motion-withdraw-no-cooperation` (mismo
+patrón de Exhibits A/B/C/D, mismo mecanismo de firmas/campos), solo cambia
+el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
+`telefono_conocido` (aquí no aplica, solo hay dirección).
+
+## Regla de numeración de páginas (decidida explícitamente por el despacho)
+
+- **Solo se numeran las páginas de evidencia / PDFs adjuntos** (lo que el
+  usuario sube para Exhibits o para una Motion). El número va **al pie de
+  página, esquina inferior derecha**.
+- **Las páginas propias de las plantillas (portada, tabla de exhibits,
+  dividers, Proof of Service, el `.dotx` en sí) NUNCA llevan número
+  nuestro.** No agregar footer/PAGE field a ninguna plantilla `.dotx`. Esto
+  ya se intentó una vez (footer en `i589-tab-cover`) y se revirtió por
+  instrucción explícita del usuario — no repetir ese enfoque.
+- `eoir-33-change-address` es un formulario federal fijo (AcroForm PDF
+  oficial de EOIR/DOJ) — no se modifica su estructura ni se le agrega
+  numeración propia; ya trae su propia paginación/instrucciones.
+- La numeración de evidencia vive en `motor/pdf_merge.py`,
+  `_pagina_numero_overlay(width, height, numero)` (reportlab,
+  `drawRightString`, Times-Roman 11, `margen_derecho=40`,
+  `margen_inferior=28`), usada por `combinar_portada_y_evidencia()` (un solo
+  punto de inserción, antes de "PROOF OF SERVICE" — usada por los Tabs de
+  I-589 y `webex-motion`) y `combinar_portada_y_evidencia_exhibits()` (un
+  punto de inserción por letra de Exhibit con nombre — usada por las
+  variantes de `motion-withdraw`).
+- **Excepción explícita (2026-08-17): Motion to Withdraw NO numera sus
+  páginas de evidencia**, a diferencia de la regla general de arriba —
+  decisión del usuario. `combinar_portada_y_evidencia_exhibits()` recibe un
+  parámetro `numerar: bool = True`; `app.py` lo llama con `numerar=False`
+  para el flujo de `exhibits_evidencia` (el único que usa esta función hoy,
+  que es exclusivo de las 3 variantes de `motion-withdraw`). El default
+  sigue en `True` por si otra plantilla futura reutiliza este mismo
+  mecanismo de "exhibits con nombre" y sí quiere numeración.
+- **Bug ya corregido**: PDFs de evidencia escaneados a veces traen `/Rotate`
+  ≠ 0 (la página se ve derecha porque el visor la rota al mostrarla, pero
+  sus coordenadas de contenido siguen siendo las de antes de rotar). Sin
+  corregir esto, el número dibujado en "abajo a la derecha" en coordenadas
+  crudas terminaba en otra esquina visual (ej. arriba a la derecha) una vez
+  aplicada la rotación. Fix: `page.transfer_rotation_to_content()` (pypdf)
+  antes de calcular `width`/`height`, en ambas funciones de merge. Si se
+  toca `pdf_merge.py`, mantener esa llamada — es la razón por la que el
+  número siempre cae en la esquina visual correcta sin importar cómo venga
+  guardado el PDF de origen.
+
+## Motion to Withdraw: un Exhibit sin evidencia se elimina del documento (decidido explícitamente)
+
+- **Regla del usuario (2026-08-17)**: si en una corrida de `motion-withdraw-*`
+  solo se sube evidencia para algunos de los Exhibits declarados (ej. solo
+  Exhibit A de A/B/C), los Exhibits SIN evidencia se eliminan por completo
+  del documento generado — ni página divisoria huérfana, ni mención en el
+  párrafo NOTICE. No es opcional/configurable desde la UI, es el
+  comportamiento por defecto de `motor/fill_engine.generar_documento` para
+  cualquier plantilla con `field_map["evidencia_exhibits"]`.
+- Dos piezas, ambas en `motor/fill_engine.py`, ambas corren **antes** de
+  `merge_runs_in_document_xml` (¡importante! ver más abajo por qué):
+  - `_apply_missing_exhibit_dividers`: quita la página divisoria completa
+    "EXHIBIT {letra}" (vía `_locate_exhibit_divider_page`, que ubica el
+    párrafo `<w:pageBreakBefore/>` que la empieza y corta hasta el
+    siguiente `<w:pageBreakBefore/>` del documento — cada página de estas
+    es autocontenida, así que esto nunca rompe el salto de página de lo que
+    viene después).
+  - `_apply_notice_exhibits`: recorta la mención de ese Exhibit en el
+    párrafo NOTICE del cuerpo de la moción (que cita cada Exhibit por
+    nombre en una sola oración, ej. "...Declaration...(Exhibit A), Proof of
+    no contact...(Exhibit B), the attached Disengagement Letter (Exhibit C)
+    and a Pro bono List (Exhibit D)."), incluyendo: quitarle el conector al
+    ítem que quede primero si el que originalmente era primero se eliminó,
+    y ponerle punto final al que quede último si el que originalmente
+    cerraba la oración (con su propio punto, ej. "(Exhibit D)." en
+    `motion-withdraw-no-cooperation`) se eliminó. Toda la configuración
+    (qué texto literal marca cada ítem, dónde está el conector, cuál cierra
+    la oración) vive en `field_map["notice_exhibits"]` de cada plantilla —
+    ver los comentarios largos en la propia función para el detalle de cada
+    clave.
+- **Por qué corren ANTES de `merge_runs_in_document_xml`**: esta función
+  fusiona runs de Word adyacentes con formato idéntico — exactamente el
+  tipo de run que `_apply_notice_exhibits` necesita que sigan SEPARADOS
+  para poder cortar solo el pedazo de un Exhibit sin tocar sus vecinos. Si
+  se llamara después, se arriesga a que la plantilla ya llegue "fusionada"
+  y los puntos de corte ya no existan. `motion-withdraw-no-cooperation` ya
+  traía sus runs separados de fábrica (los marcadores "(Exhibit X)" son
+  itálicos, formato distinto al texto de alrededor, así que nunca se
+  fusionan); `motion-withdraw-cancelation` **no** los traía separados —
+  se le hizo una edición quirúrgica one-time al `.docx` (dividir 3 runs en
+  9, mismo `rPr`, mismo texto renderizado, solo se movieron los límites de
+  `<w:r>`) para poder aplicarle el mismo mecanismo. Si se vuelve a tocar el
+  párrafo NOTICE de cualquier plantilla `motion-withdraw-*` a mano en Word,
+  hay que revisar que los runs de cada Exhibit sigan separados de los de
+  sus vecinos o esta función dejará de encontrar los cortes correctos (tira
+  `FillEngineError` con un mensaje claro si no encuentra un ancla — nunca
+  falla en silencio produciendo un documento a medio recortar).
+- Bug ya corregido en el camino: `_find_preceding_run` originalmente
+  buscaba `<w:r` con `rfind`, que también hace match parcial con `<w:rPr`
+  y `<w:rFonts` (substring) — encontraba el tag equivocado y dejaba XML mal
+  formado. Ahora usa el mismo patrón de dos búsquedas (`<w:r>` y `<w:r `)
+  que ya usaba `_find_enclosing_run`.
+- Otro bug ya corregido: insertar el punto final directo en la posición
+  "fin del `<w:r>`" lo deja como texto suelto entre elementos (fuera de
+  cualquier `<w:t>`), que Word/la extracción de texto ignora. Hay que
+  insertarlo DENTRO del `<w:t>` del marcador que queda último (justo antes
+  de su `</w:t>`) — ver `ultimo_marker_text_end` en `_apply_notice_exhibits`.
+
+## Firma default de Lorenzo hardcodeada en `i589-tab-cover` — eliminada
+
+- El `.dotx` de `i589-tab-cover` (`00_TABS_TEAM_4.dotx`) traía, **quemada
+  directamente en el documento** (no vía `field_map.json` ni el mecanismo
+  `firmas_imagen` de `motor/fill_engine.py`), una imagen flotante
+  (`<w:drawing><wp:anchor ... allowOverlap="1">`) con la firma escaneada de
+  Lorenzo, posicionada de forma absoluta justo después del párrafo "...no
+  separate service was completed." del Proof of Service. Por ser un
+  `wp:anchor` con posición absoluta y `allowOverlap="1"` (no `wp:inline`),
+  se podía sobreponer con el texto de alrededor según cuánto ocupara ese
+  párrafo — de ahí el problema reportado por el usuario.
+- **Se eliminó por instrucción explícita del usuario** (2026-08-17): se
+  quitó el `<w:r>` con el `<w:drawing>` de `word/document.xml`, su
+  relationship (`rId9`) de `word/_rels/document.xml.rels`, y el archivo
+  `word/media/image1.png` — usando `motor.ooxml_utils.unpack`/`rezip`
+  directo sobre el `.dotx` (no hay mecanismo de campo para esto porque
+  nunca fue un campo, era una imagen fija de la plantilla).
+- **Actualización (2026-08-19): sí tiene `firmas_imagen` de preparador,
+  agregado a pedido del usuario** (reportó que su firma en
+  `firmas/preparadores/Lorenzo Bracamontes.png` nunca aparecía en el
+  documento generado — la plantilla solo escribía el nombre como texto).
+  Se agregó siguiendo el mismo patrón que `webex-motion`: en
+  `word/document.xml` hay una línea de firma escrita como texto literal
+  (`_______________________`, un solo `<w:r>` que es todo el contenido de
+  su propio `<w:p>`, justo antes del párrafo con el SDT del nombre del
+  preparador en el bloque final de "Respectfully submitted") — se envolvió
+  ese `<w:r>` en un `<w:sdt>` nuevo (`<w:id w:val="930000001"/>`, mismo
+  `rPr` copiado al `sdtPr` que ya traía el run) y se registró en
+  `field_map.json` → `"firmas_imagen": [{"nombre": "preparador",
+  "categoria": "preparadores", "ids": ["930000001"]}]`. Edición hecha con
+  `motor.ooxml_utils.unpack`/`rezip` directo sobre el `.dotx` (no hay UI
+  para esto, es cirugía de plantilla). Verificado con
+  `generar_documento` real: con PNG presente inserta la imagen `wp:inline`
+  (relationship + `word/media/`, nunca ancla flotante — no repetir el
+  patrón de imagen fija anclada de la sección de arriba); sin PNG cae al
+  mismo texto `_______________________` de siempre, sin romper nada.
+  `webex-motion` y las dos `motion-withdraw-*` ya tenían este mecanismo
+  desde antes — con esto las cuatro plantillas que llevan firma de
+  preparador (todas menos `eoir-33-change-address`, que es un AcroForm fijo)
+  lo tienen.
+- **No volver a incrustar una imagen fija/anclada de firma en ningún
+  `.dotx`** — si se necesita una firma en una plantilla nueva, usar el
+  mecanismo dinámico existente (SDT + `firmas_imagen` en `field_map.json`),
+  que inserta la imagen como `wp:inline` (no flota, no se sobrepone).
+
+## `webex-motion` traía DOS firmas ancladas quemadas — eliminadas (2026-08-19)
+
+- Mismo problema que `i589-tab-cover` de arriba, pero en `MOTION_FOR_WEBEX.docx`
+  y por partida doble: la plantilla traía **dos** imágenes flotantes
+  (`<w:drawing><wp:anchor ... allowOverlap="1">`) quemadas — `word/media/image1.png`
+  (firma escaneada del abogado, `rId9`) y `word/media/image2.png` (firma del
+  preparador, `rId11`)— justo encima de las líneas de firma. Como la plantilla
+  YA tiene el mecanismo dinámico `firmas_imagen` (SDT `900000025` abogado,
+  `900000026` preparador), al generar con PNG presente se dibujaba la firma
+  nueva ENCIMA de la vieja anclada: **la firma salía dos veces, sobrepuesta**
+  (reportado por el usuario con screenshot). Fix: se quitaron los dos `<w:r>`
+  con `<w:drawing>` de `word/document.xml`, sus relationships `rId9`/`rId11`, y
+  los dos `word/media/image*.png`, con `ooxml_utils.unpack`/`rezip` directo
+  sobre el `.docx` (cada drawing estaba solo en su propio `<w:p>`; quitar el
+  run deja un párrafo vacío inocuo). Ahora la única firma es la dinámica
+  `wp:inline` de `firmas_imagen`.
+- **Regla general confirmada por el usuario (2026-08-19): NINGUNA plantilla
+  debe llevar una firma quemada/anclada** — cuando se coloca la firma nueva
+  (dinámica) no se debe sobreponer a una vieja. Ya revisadas las 5 plantillas
+  editables: `i589-tab-cover` y `webex-motion` limpias; las 3 `motion-withdraw-*`
+  solo tienen un Text Box vacío (una forma, sin imagen ni firma) — no hay más
+  firmas quemadas que quitar. Si se agrega una plantilla nueva, verificar que
+  no traiga `wp:anchor` con imagen de firma antes de registrarla.
+
+## Pluralización "Respondent(s)" con riders — `field_map["plural_riders"]`
+
+- **Regla del usuario (2026-08-19)**: cuando un caso tiene riders (varios
+  respondents → el nombre sale como "NOMBRE et al", ver
+  `case_store.nombre_para_documento`), los textos FIJOS de la plantilla que
+  dicen "Respondent"/"Respondent's" y su concordancia de verbo deben
+  pluralizarse ("moves"→"move", "does not oppose"→"do not oppose",
+  "Respondent's counsel"→"Respondents' counsel", etc.). El disparador es
+  `bool(case.get("riders"))`.
+- Mecanismo genérico en `motor/fill_engine._apply_plural_riders(document_xml,
+  field_map)`: aplica una lista CURADA de frases exactas
+  `field_map["plural_riders"]` (cada ítem `{"buscar": <singular literal>,
+  "reemplazar": <plural>}`) como reemplazo literal sobre el XML ya con campos
+  resueltos. Corre para CUALQUIER plantilla que tenga la clave, cuando hay
+  riders. Antes existía `_apply_plural_respondents` hardcodeada solo para
+  `i589-tab-cover`; se generalizó y sus dos reemplazos se migraron a
+  `field_map["plural_riders"]` de esa plantilla (`>Respondent<`→`>Respondents<`
+  y `A True Copy of the Respondent's `→`...Respondents' `).
+- **Por qué frases curadas y NO un `replace` genérico de "Respondent"**: hay
+  "Respondent" que NO se deben tocar — el placeholder del SDT del caption "In
+  the Matter of: {nombre}" es literalmente la palabra "Respondent" (se
+  reemplaza por el nombre vía `_apply_field_values`), y la tabla Form of
+  Identity del I-589 distingue por persona ("Respondent's"/"Rider's {nombre}")
+  y nunca se pluraliza. Por eso cada regla es una frase larga inequívoca (o
+  con delimitadores `>...<`) que solo matchea donde debe. Cada `buscar` debe
+  aparecer 1 sola vez; si una regla no encuentra su `buscar` (plantilla
+  editada a mano) se avisa por consola pero NO se aborta —la concordancia es
+  cosmética y nunca debe bloquear un escrito—. `webex-motion` tiene 11 reglas
+  (incluye la sección ORDER: "The Respondents do not oppose", "must comply").
+- Si se agregan riders a otra plantilla (`motion-withdraw-*` aún no tienen
+  `plural_riders`), agregar sus frases al `field_map` correspondiente tras
+  revisar su texto — el mecanismo ya es genérico, no hay que tocar código.
+
+## `webex-motion`: el nombre del cliente en la firma se rompía con nombres largos (2026-08-19)
+
+- El párrafo del nombre bajo "Attorney for Respondent(s)," (el que sigue al
+  SDT `900000017`) posicionaba el texto con 5 `<w:tab/>` + 24 espacios
+  literales en el propio `<w:t>`, más `jc="both"` heredado por copiar el
+  párrafo vecino. Eso solo alineaba la PRIMERA línea — con un nombre largo
+  (típicamente varios respondents, "NOMBRE et al"), el párrafo envolvía a
+  una segunda línea que caía al margen izquierdo de la página (sin
+  sangría real que la sostuviera), y `jc="both"` estiraba con espaciado
+  raro la primera línea al justificarla.
+- Fix: se quitaron los tabs/espacios y el `jc="both"` de ESE párrafo
+  puntual, y se agregó `w:ind w:left="5040"` (twips, ≈3.5in — misma
+  posición visual que el hack anterior para nombres cortos). Con sangría
+  real, si el nombre envuelve, la segunda línea queda alineada bajo
+  "Attorney for Respondent(s)," en vez de saltar al margen — se adapta
+  solo según la longitud del nombre.
+- Las 3 plantillas `motion-withdraw-*` NO repiten el nombre del cliente en
+  su bloque de firma (solo dicen "Attorney for Respondent," sin nombre
+  debajo), así que este bug no les aplica — revisado y confirmado.
+- Si se vuelve a tocar el bloque de firma de `webex-motion` a mano en
+  Word, evitar reintroducir alineación con espacios/tabs literales para
+  campos de longitud variable (nombre, "et al", etc.) — usar sangría de
+  párrafo (`Formato > Párrafo > Sangría izquierda`) en vez de espaciar a
+  mano, para que el texto siga viéndose bien sin importar cuánto mida.
+
+## `webex-motion`: saltos de página por sección — INTENTADO Y REVERTIDO (2026-08-19)
+
+- **Contexto**: la plantilla finge los saltos de página entre secciones con
+  runs largos de párrafos vacíos (28 tras el TABLE OF CONTENTS, 13 tras el
+  bloque de firma). Eso hacía que una línea se desbordara y quedara huérfana
+  en una hoja casi vacía (la línea "Date: ___ By: Court Staff" del Certificate
+  of Service).
+- **Se intentó** reemplazar esos rellenos por `<w:pageBreakBefore/>` reales al
+  inicio de cada sección (cuerpo de la moción, ORDER, PROOF OF SERVICE; el TOC
+  ya lo traía). **El usuario lo revirtió: "se arruinó el formato".** Se
+  restauró la estructura original de la plantilla (solo se mantuvo la
+  eliminación de firmas quemadas), volviendo a los rellenos de párrafos
+  vacíos y al único `pageBreakBefore` del TOC.
+- **No volver a aplicar el enfoque de `pageBreakBefore` por sección a
+  `webex-motion`** sin que el usuario lo pida explícitamente y valide el
+  render en su Word — no se pudo verificar visualmente en el sandbox
+  (LibreOffice roto) y el resultado real rompió el formato. Si se retoma el
+  problema del desborde, hay que hacerlo con render real a la vista, no a
+  ciegas por estructura.
+
+## Tab de Country Conditions (CC/OSAC): años ya no son obligatorios los dos (2026-08-21)
+
+- **Regla del usuario (2026-08-21)**: en un Tab con categoría "Country
+  Conditions" (i589-tab-cover), si el usuario solo sube evidencia de UNO de
+  los dos ítems (Country Reports on Human Rights Practice **o** OSAC Crime
+  and Safety Report — a veces solo hay actualización de uno de los dos en
+  el sistema legal), ya no se le obliga a llenar el año del otro. Solo se
+  incluye en el documento el subitem con evidencia adjunta (el otro se
+  descarta, mismo mecanismo de `frag_indices_incluidos` que ya existía) y
+  solo su año es obligatorio.
+- **Sin evidencia subida** (modo manual, los dos subitems se incluyen
+  siempre) **se siguen pidiendo los dos años**, como antes — el cambio
+  aplica solo cuando hay evidencia adjunta para alguno de los dos.
+- Dos lugares tocados, ambos ya usaban `frag_indices_incluidos` para decidir
+  qué subitem incluir pero no lo consultaban para decidir qué año exigir:
+  - `motor/exhibit_builder._build_category_xml` (rama `country_conditions`):
+    ahora llama `frag_indices_incluidos` ANTES de validar/reemplazar, y solo
+    exige `anio_cc`/`anio_osac` si el índice correspondiente (1=Country
+    Reports, 2=OSAC) va a quedar incluido.
+  - `static/app.js` → `generarDocumento()`: la validación previa al submit
+    ahora mira `tg.evidencias.country_reports` / `.osac` (ya construido por
+    `collectExhibits()`) para saber cuál año es obligatorio, replicando la
+    misma regla que el backend (si no hay evidencia de ninguno de los dos,
+    exige ambos años igual que antes).
+- Si se retoca esta lógica, mantener sincronizados el frontend y
+  `_build_category_xml` — son dos validaciones independientes que deben
+  llegar a la misma conclusión sobre qué año es obligatorio, si no el
+  frontend puede bloquear con un error que el backend ya no exigiría (o
+  viceversa, dejar pasar algo que el backend igual rechaza).
+
+## Campo "Próxima audiencia": autoformato de fecha MM/DD/AAAA → texto (2026-08-24)
+
+- **Regla del usuario (2026-08-24)**: el campo de Paso 1 (Caso) "Próxima
+  audiencia" es texto libre (siempre lo fue — se inserta literal en el
+  documento, sin parseo de fecha real en el backend). El usuario pidió poder
+  escribir la fecha/hora en formato numérico `MM/DD/AAAA HH:MM AM/PM` y que
+  el sistema la convierta sola al formato en palabras que usa el documento,
+  sin dejar de aceptar también el formato ya escrito en palabras (pegado tal
+  cual del portal EOIR).
+- Implementado 100% en frontend, `static/app.js`:
+  `formatProximaAudiencia(raw)` usa un regex que solo matchea si el texto
+  **empieza** con `D/D/AAAA` (1-2 dígitos día/mes, 4 dígitos año), con hora
+  `H:MM AM/PM` opcional a continuación, y cualquier resto de texto después
+  (tipo de audiencia, modalidad) que se preserva tal cual, reconectado con
+  coma. Si el texto no matchea ese patrón inicial (ej. ya viene en palabras,
+  "September 10, 2026, ..."), la función lo devuelve sin tocar — así se
+  aceptan ambos formatos en el mismo campo, sin un toggle ni dos inputs.
+  Ejemplo: `"08/26/2026 08:30 AM, Master Calendar Hearing, In Person"` →
+  `"August 26, 2026 at 8:30 AM, Master Calendar Hearing, In Person"`.
+- `attachProximaAudienciaFormatter` lo ata al evento `blur` del input (no a
+  `input`) — a propósito, para no reescribir la fecha en pantalla mientras
+  el usuario todavía está tecleando los dígitos (a diferencia de
+  `attachANumberFormatter` del A#, que sí formatea en cada tecla porque ahí
+  solo se insertan guiones, no se reescribe texto).
+- El formato de salida usa `"Month D, AAAA at H:MM AM/PM"` (con la palabra
+  "at" antes de la hora) — así lo pidió el usuario explícitamente en su
+  ejemplo, aunque el resto del campo (tipo/modalidad) sigue separado por
+  comas como ya se hacía. No es el mismo formato exacto que trae el
+  placeholder viejo del campo (que no usaba "at") — si el despacho prefiere
+  quitar el "at" y usar coma en su lugar ahí también, es un cambio de una
+  sola línea en `formatProximaAudiencia`.
+- No hay validación de que el día exista de verdad para ese mes (ej. no
+  rechaza "02/30/2026") — es solo reformateo de texto, no parseo real de
+  fecha; tampoco hace falta un objeto `Date` porque el string se inserta
+  literal en el documento.
+
+## Tab de FEE: nuevo ítem "Biometrics Compliance" (2026-08-24)
+
+- **Pedido del usuario (2026-08-24)**: agregar un tercer ítem dentro de la
+  categoría `fee` (antes solo Fee Receipt + FBI Fingerprint) — "Biometrics
+  Compliance", con subitem "i. Respondent's Fingerprint Notification
+  Biometric Processing Stamp ({FECHA})" — y un campo en la UI para capturar
+  la fecha de captura de huella por Tab.
+- Fragmentos nuevos en `plantillas/i589-tab-cover/fragments/`:
+  `subtitle_biometrics_compliance.xml` (encabezado "Biometrics Compliance."
+  en negrita/subrayado, mismo estilo que `subtitle_form_of_identity.xml`) e
+  `item_biometrics_compliance.xml` ("i. Respondent's Fingerprint
+  Notification Biometric Processing Stamp (DATE)." con el placeholder
+  literal `(DATE)` que se reemplaza por la fecha real). Ambos autoría de
+  Claude en esta sesión (no extraídos del `.dotx` original con
+  `analyze_template.py`, porque no existían en la plantilla) — mismo
+  `rFonts`/`sz`/`spacing` que los fragmentos vecinos, `paraId`/`textId`
+  inventados sin colisión con los existentes.
+- `motor/exhibit_builder.py`: `CATEGORY_FRAGMENTS["fee"]` pasó de 2 a 4
+  fragmentos (`item_fee_receipt`, `item_fbi_fingerprint`,
+  `subtitle_biometrics_compliance`, `item_biometrics_compliance` — índices
+  0-3) y `ITEMS_POR_CATEGORIA["fee"]` ganó `{"key":
+  "biometrics_compliance", "label": "Biometrics Compliance", "frag_index":
+  3}`. Con eso, TODO el mecanismo existente de subida de evidencia/paginado
+  (`app.py._resolver_paginas_evidencia`, `build_pages_cell_content`) ya
+  funcionaba solo, sin tocar nada más — es genérico sobre
+  `ITEMS_POR_CATEGORIA` desde que se construyó (ver ítems previos de este
+  changelog).
+- **Problema encontrado y corregido en el camino**: el subtítulo
+  "Biometrics Compliance" NO debe comportarse como el de
+  `country_conditions` (que es de TODA la categoría y acompaña a
+  cualquiera de sus ítems) — es un encabezado que pertenece SOLO a su
+  propio ítem. Con la regla genérica vieja de `frag_indices_incluidos`
+  ("un subtítulo siempre acompaña a cualquier ítem incluido de la
+  categoría"), subir evidencia SOLO de Fee Receipt (sin Biometrics
+  Compliance) dejaba el encabezado "Biometrics Compliance" huérfano, sin su
+  ítem debajo. Fix: nuevo dict `SUBTITULOS_ATADOS_A_ITEM = {"fee": {2: 3}}`
+  (frag_index del subtítulo → frag_index del ítem del que depende);
+  `frag_indices_incluidos` solo incluye ese subtítulo si su ítem atado
+  también quedó incluido. Categorías sin entrada en ese dict (todas las
+  demás) mantienen el comportamiento viejo sin cambios — verificado con
+  `country_conditions` (regresión).
+- **Por qué subtítulo e ítem son DOS fragmentos separados y no uno solo**:
+  se probó primero combinarlos en un único fragmento (un solo frag_index,
+  dos `<w:p>` adentro) para evitar el problema del huérfano — funciona para
+  DESCRIPTION, pero rompe la alineación línea a línea con la columna PAGES
+  (`build_pages_cell_content` genera una línea de PAGES por frag_index
+  incluido, no por párrafo de XML; con un solo frag_index de dos párrafos,
+  DESCRIPTION mostraba 2 líneas para ese ítem pero PAGES solo 1, y el
+  "Pgs. X-Y" quedaba pegado a la línea equivocada). Se revirtió a dos
+  fragmentos separados (mismo patrón que `subtitle_country_conditions` +
+  `subitem_country_reports`/`subitem_osac`) — verificado que con evidencia
+  adjunta la columna PAGES saca una línea en blanco para el subtítulo y
+  "Pgs. X-Y" alineado con la línea del ítem, igual que en Country
+  Conditions.
+- La fecha (`fecha_huella`) es **obligatoria cuando el ítem Biometrics
+  Compliance vaya a quedar incluido** — mismo patrón que `anio_cc`/
+  `anio_osac` de Country Conditions: sin evidencia adjunta en la categoría
+  `fee` (modo manual) los 3 ítems se incluyen siempre y la fecha siempre se
+  pide; con evidencia adjunta, solo se pide si justo se subió evidencia
+  para `biometrics_compliance`. Threading completo: `static/app.js`
+  (`collectExhibits` → `tg.fecha_huella`, validado en `generarDocumento()`
+  antes del submit) → `app.py` (pasa `document_instance` sin tocar) →
+  `motor/fill_engine._apply_exhibits` → `build_exhibit_table` →
+  `build_description_cell_content` → `_build_category_xml`, que lanza
+  `ValueError("fee requiere 'fecha_huella' para Biometrics Compliance")` si
+  falta (la validación del frontend debería atajarlo antes, este es el
+  respaldo del backend, igual que con `anio_cc`/`anio_osac`). **Si se toca
+  esta lógica, mantener sincronizados frontend y backend** — mismo aviso
+  que el ítem de CC/OSAC del checklist de arriba.
+- UI: `static/app.js` agrega `.fecha-huella-field` (input de texto libre,
+  ej. "09/22/2023") a la tarjeta de cada Tab, visible solo cuando la
+  categoría `fee` está marcada — mismo patrón que `.tipo-fee-field`. No
+  lleva autoformato de fecha (a diferencia de "Próxima audiencia") — es
+  texto libre que se inserta literal entre paréntesis, igual que la fecha
+  ya hardcodeada de `item_fbi_fingerprint.xml`.
+- `catalogos.json` → `exhibit_categorias.fee.etiqueta` actualizada a "FEE
+  (fee receipt + FBI fingerprint + Biometrics Compliance)" para que el
+  checkbox de categoría en la UI refleje los tres ítems.
+- No se tocó `field_map.json` — este mecanismo vive enteramente en
+  `exhibit_builder.py`/fragments (como `tipo_fee`, que tampoco es un campo
+  SDT), no en el sistema de SDT/campos simples de la plantilla.
+
+## Biometrics Compliance pasó a ser 1 documento POR PERSONA (líder + riders) (2026-08-24)
+
+- **Pedido del usuario (mismo día que se creó el ítem)**: en vez de un solo
+  campo `fecha_huella` por Tab, dejar subir **más de un documento, uno por
+  rider**, y que el nombre del rider aparezca en el propio renglón — "ya
+  tienes una referencia de cómo se ponen los riders", en referencia al
+  mecanismo que ya existía para Form of Identity (un documento por persona
+  del caso, ver `identidades`/`personasDelCaso()`).
+- **Se reemplazó el campo único `fecha_huella` por una lista `biometricos`**
+  (uno por persona: líder + cada rider del caso), clonando exactamente el
+  patrón de Form of Identity en vez de inventar uno nuevo:
+  - `motor/exhibit_builder.py`: "Biometrics Compliance" dejó de vivir en
+    `CATEGORY_FRAGMENTS["fee"]`/`ITEMS_POR_CATEGORIA["fee"]` (que ahora solo
+    tienen `item_fee_receipt`/`item_fbi_fingerprint`, índices 0-1) — pasó a
+    ser una sección dinámica igual que `_build_form_of_identity_description`/
+    `_build_form_of_identity_pages`: nuevas funciones
+    `_build_biometrics_compliance_description(biometricos)` y
+    `_build_biometrics_compliance_pages(biometricos)`, que `_build_category_xml`
+    y `build_pages_cell_content` **agregan siempre al final** de la categoría
+    "fee" cuando está marcada (no depende de `frag_indices_incluidos`, no
+    hay forma de omitirla — mismo comportamiento que Form of Identity, que
+    tampoco es "opcional" una vez marcada la categoría). Por esto se pudo
+    **borrar `SUBTITULOS_ATADOS_A_ITEM["fee"]`** (el mecanismo del huérfano
+    de la sección anterior de este archivo) — ya no aplica porque el
+    subtítulo y sus ítems viven juntos en su propia función, nunca
+    desalineados.
+  - Cada entrada de `biometricos` es `{persona_nombre, fecha, evidencia}`
+    (mismo shape que `identidades`, cambiando `tipo_doc` por `fecha`). Texto
+    por persona (`_biometrics_line_text`): sin `persona_nombre` →
+    "Respondent's Fingerprint Notification Biometric Processing Stamp
+    (FECHA)."; con `persona_nombre` → "Rider's {NOMBRE} Fingerprint
+    Notification Biometric Processing Stamp (FECHA)." — **se quitó el "i. "**
+    que tenía el ítem original (`item_biometrics_compliance.xml`): con un
+    renglón por persona ya no tiene sentido un numeral romano fijo de un
+    solo ítem; queda sin numerar, igual que los renglones de Form of
+    Identity.
+  - `fecha` es obligatoria por persona (`_build_biometrics_compliance_description`
+    tira `ValueError` si falta) — es el mismo requisito que antes tenía el
+    `fecha_huella` único, generalizado a cada entrada.
+  - `app.py._resolver_paginas_evidencia`: mismo tratamiento que
+    `identidades`/`documentos_se` — nuevo bloque `if categoria == "fee":`
+    que resuelve `evidencia_id` → `evidencia` (pagina_inicio/num_paginas/path)
+    por cada entrada de `biometricos`, en el mismo lugar del loop de
+    categorías donde ya se resuelven `fee_receipt`/`fbi_fingerprint` (por
+    eso el orden de páginas queda: fee_receipt, fbi_fingerprint, luego
+    biometrics del líder, luego de cada rider — coincide con el orden en que
+    `_build_biometrics_compliance_description` los agrega al final). También
+    se sumó `biometricos_resueltos` a la lista `docs_con_pagina` que arma el
+    merge del PDF de evidencia (mismo bloque que ya sumaba
+    `identidades_resueltos`/`documentos_se_resueltos`).
+  - `static/app.js`: se quitó el único campo `.fecha-huella-field`/
+    `.tab-fecha-huella`. Nuevo `renderBiometricosUploads(card)` — clon
+    literal de `renderIdentidadesUploads`, un renglón por
+    `personasDelCaso()` con input de fecha (texto libre) + upload de PDF
+    opcional; estado en `card._biometricosEvidencia` (archivos, mismo patrón
+    que `_identidadesEvidencia`) y `card._biometricosFecha` (fechas
+    tipeadas, para no perderlas cuando `actualizarCampos()` vuelve a
+    regenerar el HTML del bloque al tocar otra categoría — Form of Identity
+    no necesita este dict paralelo porque su `<select>` de tipo de
+    documento no pierde nada crítico al resetear a su default, pero perder
+    una fecha tipeada a mano sí sería molesto). `recalcularPaginas()` y
+    `collectExhibits()` tienen el mismo tratamiento por-persona que ya
+    tenían para `identidades`. La validación previa al submit en
+    `generarDocumento()` ahora exige fecha en cada entrada de
+    `tg.biometricos` (reemplaza el chequeo viejo de `evFee.biometrics_compliance`,
+    que ya no existe como key de `evidencias` — Biometrics Compliance no
+    vive más en el diccionario `evidencias` genérico de items fijos).
+- **Por qué no se mantuvo el chequeo "si solo subís Fee Receipt se omite
+  Biometrics Compliance completo" de la sección anterior**: con evidencia
+  por persona ya no aplica esa lógica de todo-o-nada por categoría — cada
+  persona tiene su propio renglón, obligatorio, igual que ya pasaba con
+  Form of Identity (que tampoco se puede "omitir" una vez marcada la
+  categoría). Si en el futuro se pide poder omitir Biometrics Compliance
+  para un caso sin riders, es un cambio deliberado aparte, no algo que
+  quedó pendiente de este cambio. **Actualización 2026-08-26: ese cambio
+  se pidió y se hizo** — ver "Ajuste (2026-08-26): Biometrics Compliance
+  ya no exige fecha a quien no adjunta archivo" más abajo. Cada persona
+  sigue siendo obligatoria SOLO en modo manual (nada subido en ningún
+  lado de "fee"); con evidencia en algún lado de la categoría, una
+  persona sin su propio archivo se omite sin exigirle nada.
+- Verificado con pruebas manuales (no hay test suite automatizada en este
+  proyecto): alineación PAGES/DESCRIPTION 4/4 con evidencia parcial (fee_receipt
+  con archivo, fbi_fingerprint sin archivo, biometrics de 2 personas, una con
+  archivo y otra sin), y pipeline completo `_resolver_paginas_evidencia` →
+  `build_exhibit_table` con líder + 1 rider, ambos con archivo — páginas
+  encadenadas correctamente (1-2 fee_receipt, 3 biometrics líder, 4
+  biometrics rider).
+
+## Bug: Biometrics Compliance no anexaba evidencia (2026-08-25)
+
+- **Reporte del usuario**: comparó un documento generado real (Tab D, caso
+  con líder + 1 rider, evidencia de Biometrics Compliance subida para
+  ambos) contra un ejemplo de cómo debía verse. Dos problemas visibles: (1)
+  Fee Receipt y FBI Fingerprint aparecían en la tabla sin evidencia
+  adjunta (nunca se subió nada para esos dos ítems en ese Tab — no debían
+  aparecer), y (2) el PDF final no traía anexadas las páginas de evidencia
+  de Biometrics Compliance en absoluto (el documento se quedaba en 4
+  páginas: portada, tabla de exhibits, divisoria "EXHIBIT D", Proof of
+  Service — sin las páginas reales del I-797C subido), aunque la columna
+  PAGES sí mostraba un rango "Pgs. 51-54" (calculado del lado del
+  navegador, nunca verificado contra lo que el backend realmente fusionó).
+- **Causa raíz, dos bugs independientes** — ambos por la misma razón de
+  fondo: `biometricos` (la lista por-persona agregada en la sesión
+  anterior, ver sección de arriba) vive FUERA del dict genérico
+  `evidencias` que ya usaban `fee_receipt`/`fbi_fingerprint`, y dos piezas
+  de código que ya existían antes de `biometricos` nunca se actualizaron
+  para saber de su existencia:
+  1. `app.py`, el gate `tiene_evidencia` (justo antes de decidir si se
+     llama a `_resolver_paginas_evidencia` — la función que calcula
+     páginas Y arma la lista de PDFs que después se fusionan al PDF de
+     portada) solo miraba `tg["evidencias"]`/`identidades`/
+     `documentos_se`, nunca `tg["biometricos"]`. Si en un Tab la ÚNICA
+     evidencia subida era de Biometrics Compliance (como en el caso
+     reportado), `tiene_evidencia` daba `False` y **todo el mecanismo de
+     resolución de páginas y fusión de PDFs se saltaba por completo** —
+     `bio["evidencia"]` nunca se poblaba, y por lo tanto tampoco se
+     agregaba nada a `docs_con_pagina` más abajo en el mismo archivo (el
+     bloque que arma la lista de rutas a fusionar con
+     `combinar_portada_y_evidencia`). El "Pgs. 51-54" que sí se veía en el
+     documento venía del cálculo hecho en el navegador
+     (`recalcularPaginas()` en `static/app.js`, que sí sabe sumar páginas
+     de `card._biometricosEvidencia` para mostrarle un preview al
+     usuario) y se usaba tal cual como texto de fallback — sin que el
+     backend hubiera resuelto ni fusionado nada real. Fix: agregar
+     `or any(b.get("evidencia_id") for b in (tg.get("biometricos") or
+     []))` a la condición de `tiene_evidencia`.
+  2. `motor/exhibit_builder.frag_indices_incluidos(categoria, evidencias)`
+     decide si una categoría con ítems fijos (ej. "fee") está en "modo
+     manual" (nada subido → incluir todos los ítems fijos) o "modo
+     evidencia" (algo subido → incluir solo los ítems fijos que sí tienen
+     archivo) mirando ÚNICAMENTE el dict `evidencias`
+     (`fee_receipt`/`fbi_fingerprint`). Nunca sabía que `biometricos`
+     pudiera tener evidencia — así que con evidencia SOLO en
+     `biometricos` (y nada en `evidencias` para esos dos ítems fijos),
+     `evidencias` llegaba vacío y la función cae en "modo manual",
+     incluyendo Fee Receipt y FBI Fingerprint sin archivo, en vez de
+     omitirlos (que es lo correcto: hay evidencia en la categoría, solo
+     que vive en la sección dinámica). Fix: nuevo parámetro
+     `hay_evidencia_dinamica: bool = False` en `frag_indices_incluidos` —
+     cuando es `True`, la función NO cae en modo manual aunque
+     `evidencias` esté vacío (los ítems fijos sin evidencia simplemente no
+     se incluyen). Los dos llamadores que arman la tabla
+     (`_build_category_xml` para DESCRIPTION, y el loop por categoría
+     dentro de `build_pages_cell_content` para PAGES) lo setean a `True`
+     solo para `categoria == "fee"` y solo si algún `biometricos` trae
+     `evidencia`/`evidencia_id` — **hay que pasarlo en AMBOS lugares**, no
+     alcanza con uno solo, porque DESCRIPTION y PAGES cada uno vuelve a
+     llamar `frag_indices_incluidos` por su cuenta; si solo se arregla uno
+     de los dos, las columnas quedan desalineadas (se detectó exactamente
+     así al probar: 3 párrafos en DESCRIPTION vs 5 en PAGES antes de
+     corregir el segundo llamador).
+- **Por qué no se detectó en la sesión anterior**: las pruebas de esa
+  sesión (alineación PAGES/DESCRIPTION, pipeline `_resolver_paginas_evidencia`
+  → `build_exhibit_table`) siempre incluyeron evidencia de `fee_receipt`
+  *junto con* la de `biometricos` en el mismo caso de prueba — nunca se
+  probó el caso real reportado por el usuario, evidencia SOLO en
+  `biometricos` y nada en los ítems fijos de "fee". Si se agrega evidencia
+  dinámica a otra categoría con ítems fijos en el futuro, probar
+  explícitamente el caso "evidencia SOLO en la sección dinámica, nada en
+  los ítems fijos" — es el caso que expone este tipo de bug.
+- Verificado con pruebas manuales tras el fix (no hay test suite
+  automatizada en este proyecto): reproducido el escenario exacto
+  reportado (líder + 1 rider, evidencia solo en `biometricos`) — Fee
+  Receipt/FBI Fingerprint ya no aparecen, DESCRIPTION y PAGES quedan en 3
+  párrafos alineados 1 a 1 ("Pgs. 51-52"/"Pgs. 53-54" en las líneas
+  correctas), y `_resolver_paginas_evidencia` + el gate `tiene_evidencia`
+  corregido sí resuelven y dejan lista la fusión real de los PDFs. También
+  se corrieron 3 escenarios de regresión (fee_receipt con evidencia y
+  biometricos sin ella; ambos con evidencia; líder+2 riders con evidencia
+  mixta) sin romper el comportamiento ya existente.
+
+### Ajuste (mismo día): subtítulo "Biometrics Compliance." repetido por persona, no compartido
+
+- El fix de arriba corrigió que se incluyera/anexara la evidencia
+  correcta, pero el usuario mandó captura de pantalla del documento real
+  generado: con el subtítulo "Biometrics Compliance." compartido UNA vez
+  para las 2 personas (líder + rider), la columna PAGES se desalineaba a
+  partir de la 2da persona — "Pgs. 53-54" (el rango del rider) caía junto
+  a la línea envuelta del renglón del líder, no junto al renglón del
+  rider. Causa: el texto de cada renglón ("Respondent's/Rider's ... Fingerprint
+  Notification Biometric Processing Stamp (FECHA).") es largo y casi
+  siempre ocupa 2 líneas visuales al renderizar en Word, pero
+  `_build_biometrics_compliance_pages` solo reservaba 1 párrafo de PAGES
+  por persona (alineado 1 a 1 con los PÁRRAFOS XML de DESCRIPTION, no con
+  las LÍNEAS VISUALES ya envueltas) — Word alinea columnas de una tabla por
+  altura acumulada real, no por conteo de párrafos, así que un renglón que
+  envuelve a 2 líneas visuales sin su columna PAGES compensando esa altura
+  desalinea todo lo que sigue.
+- El usuario pidió explícitamente tratar cada persona como su propia
+  "categoría" (con su propio subtítulo), en vez de un subtítulo compartido
+  para todas. Fix en `motor/exhibit_builder.py`: tanto
+  `_build_biometrics_compliance_description` como
+  `_build_biometrics_compliance_pages` ahora arman un bloque
+  `[subtítulo, renglón]` (o `[blank, valor]` en PAGES) POR PERSONA, y unen
+  los bloques de distintas personas con el mismo `spacer`/`blank` (párrafo
+  vacío) que ya se usa para separar categorías distintas en la tabla — cada
+  persona reinicia su propio bloque de 2 párrafos en ambas columnas
+  (verificado que los conteos siguen coincidiendo 1 a 1: 5 párrafos con
+  líder+1 rider, 8 con líder+2 riders, siempre `n_desc == n_pages`).
+- **Importante — esto NO garantiza matemáticamente que "Pgs. X-Y" caiga en
+  la línea visual exacta del renglón de esa persona si su propio texto
+  envuelve a 2 líneas** (el subtítulo repetido resetea la alineación ENTRE
+  personas, pero dentro del bloque de una misma persona, si su renglón
+  ocupa 2 líneas y su valor de PAGES solo reserva 1, ese "Pgs. X-Y" queda
+  bien alineado con la PRIMERA línea de su propio renglón — que es lo que
+  importa — pero no hay una línea de PAGES extra reservada para la 2da
+  línea envuelta; no debería hacer falta porque el bloque de la SIGUIENTE
+  persona ya arranca de cero con su propio subtítulo). Como
+  LibreOffice está roto en este sandbox (ver "Limitaciones conocidas" más
+  abajo), este ajuste **no se pudo verificar visualmente en Word real** —
+  solo se verificó la estructura XML (conteo de párrafos, orden). Si al
+  generar un documento real en Word el "Pgs." de alguna persona sigue sin
+  caer en la línea correcta, avisar con el detalle exacto (qué texto/fecha
+  tenía esa persona, en qué línea cayó vs. en cuál debía cuál) para ajustar
+  con precisión en vez de adivinar.
+
+### Ajuste (2026-08-26): Biometrics Compliance ya no exige fecha a quien no adjunta archivo
+
+- **Reporte del usuario**: en un Tab con Fee Receipt cargado pero SIN
+  archivo de Biometrics Compliance para Respondent, el formulario
+  bloqueaba con "Falta la fecha de captura de huella (Biometrics
+  Compliance) para Respondent en el Tab A" — exigía la fecha aunque el
+  usuario no estuviera subiendo evidencia de ese ítem para esa persona.
+  Esto era justo el caso que la sección "Biometrics Compliance pasó a ser
+  1 documento POR PERSONA" (más arriba) había dejado anotado como "cambio
+  deliberado aparte, no algo que quedó pendiente" — el usuario ahora lo
+  pidió explícitamente.
+- **Regla nueva, mismo criterio "modo evidencia" que ya usan Country
+  Conditions/CC-OSAC y fee_receipt/fbi_fingerprint**: si la categoría
+  "fee" tiene evidencia adjunta EN ALGUNA PARTE (fee_receipt,
+  fbi_fingerprint, o Biometrics Compliance de otra persona), una persona
+  SIN su propio archivo de Biometrics Compliance se omite por completo
+  del documento (ni renglón, ni fecha obligatoria). Sin NINGÚN archivo
+  subido en toda la categoría (modo manual puro), se sigue exigiendo la
+  fecha de todas las personas y se incluyen todas, como antes — este caso
+  no cambió.
+- Dos lugares tocados, mismo patrón de sincronización frontend/backend que
+  ya se repite en este proyecto (CC/OSAC, Biometrics original):
+  - `motor/exhibit_builder.py`: `_build_biometrics_compliance_description`
+    y `_build_biometrics_compliance_pages` ganaron un parámetro
+    `modo_evidencia: bool = False` — si es `True`, se salta (sin exigir
+    fecha) a cualquier persona sin `evidencia`/`evidencia_id`. Nuevo
+    helper `_fee_tiene_evidencia_en_items_fijos(evidencias)` (mira si
+    `fee_receipt`/`fbi_fingerprint` están en el dict `evidencias`). Los
+    dos llamadores (`_build_category_xml` para DESCRIPTION,
+    `build_pages_cell_content` para PAGES) calculan `modo_evidencia_fee =
+    _fee_tiene_evidencia_en_items_fijos(evidencias) or
+    hay_evidencia_dinamica` — **hay que setearlo en AMBOS lugares**, no
+    alcanza con uno solo (mismo aviso que la vez pasada con
+    `hay_evidencia_dinamica`: si solo se arregla uno de los dos,
+    DESCRIPTION y PAGES quedan con distinta cantidad de personas
+    incluidas y se desalinean).
+  - `static/app.js` → `generarDocumento()`: la validación previa al
+    submit ahora calcula el mismo `modoEvidenciaFee` (mirando
+    `tg.evidencias.fee_receipt`/`.fbi_fingerprint` y si algún
+    `tg.biometricos` ya trae `evidencia_id`) y solo exige `fecha` a la
+    persona que tenga su propio `evidencia_id` cuando `modoEvidenciaFee`
+    es `true`; sin evidencia en ningún lado de la categoría, sigue
+    exigiendo la fecha de todos.
+- Si en el futuro se toca esta lógica, mantener sincronizados frontend y
+  backend — son dos validaciones independientes que deben llegar a la
+  misma conclusión sobre qué personas quedan incluidas/obligadas, mismo
+  aviso que ya aplica a CC/OSAC y al fix original de Biometrics.
+- Verificado con pruebas manuales (no hay test suite automatizada para
+  este caso puntual en `tests/run_tests.py`, aunque la suite completa
+  sigue en 10/10): reproducido el escenario exacto del reporte
+  (fee_receipt con archivo, biometrics de Respondent sin archivo ni
+  fecha) — ya no lanza error, Biometrics Compliance se omite del
+  documento, Fee Receipt sigue apareciendo. Confirmado además que sigue
+  exigiendo la fecha cuando la persona SÍ tiene su propio archivo
+  adjunto, y que en modo completamente manual (nada subido en ningún
+  lado) se sigue exigiendo la fecha de todas las personas, sin cambios.
+
+## Supplemental Evidence: Declaration pasó a ser 1 documento por rider (2026-08-26)
+
+- **Pedido del usuario**: en el Tab de Supplemental Evidence, permitir
+  agregar una Declaration por cada rider del caso (además de la del
+  líder), y que un rider sin su propia declaración adjunta se omita del
+  documento (ni renglón, ni mención) en vez de forzar una entrada vacía o
+  genérica.
+- **Antes**: "Declaration" era uno de los 3 tipos (`TIPOS_SUPPLEMENTAL_EVIDENCE
+  = ["Declaration", "Psychological Report", "News"]`) de la lista libre
+  `documentos_se` (agregar/quitar documentos a mano, sin asociar a
+  persona) — el texto era SIEMPRE genérico ("Respondent's Declaration for
+  Support of...") sin importar cuántas veces se agregara ni de quién
+  fuera, así que dos declaraciones (líder + rider) hubieran salido con el
+  mismo texto exacto, sin poder distinguir a cuál persona pertenecía cada
+  una.
+- **Fix, mismo patrón que Biometrics Compliance** (por-persona + "modo
+  evidencia"): "Declaration" se sacó de `TIPOS_SUPPLEMENTAL_EVIDENCE`
+  (ahora solo `["Psychological Report", "News"]`, que siguen siendo la
+  lista libre sin persona asociada) y pasó a ser una sección dinámica
+  nueva, `declaraciones: list[dict]` (`{persona_nombre, evidencia}`), con
+  una entrada automática por persona del caso (líder + cada rider) —
+  clonado de `biometricos` pero SIN campo obligatorio adicional (no hay
+  equivalente a "fecha", solo el archivo).
+  - `motor/exhibit_builder.py`: `_declaration_line_text(persona_nombre)`
+    ("Respondent's Declaration..." / "Rider's {NOMBRE} Declaration...",
+    mismo texto base `_TEXTO_DECLARATION` para el líder que ya existía),
+    `_declaraciones_por_defecto()`, `_supplemental_evidence_en_modo_evidencia(documentos,
+    declaraciones)` (True si hay evidencia en CUALQUIER parte de la
+    categoría — declaraciones de otra persona, o algún Psychological
+    Report/News con archivo). `_build_supplemental_evidence_description`/
+    `_pages` ganaron el parámetro `declaraciones` y ahora emiten primero
+    las declaraciones incluidas (omitiendo a quien no tenga su propio
+    archivo si la categoría está en modo evidencia; sin NADA subido en
+    ninguna parte —modo manual— se incluyen todas, líder + cada rider,
+    igual que el ítem genérico de antes) y después los documentos libres
+    de `documentos_se`. Las líneas de declaración NO se pluralizan con
+    `pluralizar_respondent` aunque el Tab sea plural (mismo criterio que
+    Form of Identity/Biometrics: ya distinguen por persona) — los
+    documentos libres (Psychological Report/News) sí se siguen
+    pluralizando como antes.
+  - `declaraciones` se sumó a las firmas de `_build_category_xml`,
+    `build_description_cell_content`, `build_pages_cell_content` y
+    `build_exhibit_table` (mismo hilo que ya llevaban `biometricos`/
+    `identidades`) y al chequeo de "hay algo con evidencia adjunta en el
+    Tab" al inicio de `build_pages_cell_content` (**si se olvida ese
+    chequeo, es el mismo bug ya documentado para Biometrics** — con
+    evidencia SOLO en declaraciones, la función caería en el fallback de
+    "una sola línea con el rango completo" en vez de construir la tabla
+    real por categoría).
+  - `app.py._resolver_paginas_evidencia`: nuevo bloque `for decl in
+    declaraciones` dentro de la rama `supplemental_evidence` (ANTES del
+    loop de `documentos_se`, para que el orden de páginas coincida con el
+    orden en que `_build_supplemental_evidence_description` las agrega:
+    declaraciones primero, documentos libres después) — mismo patrón que
+    ya usan `identidades`/`biometricos`. También se sumó a `tiene_algo`
+    (gate para decidir si se resuelven páginas), al gate `tiene_evidencia`
+    de `api_generar`, y a `docs_con_pagina` (lista de PDFs a fusionar).
+  - `static/app.js`: nuevo `renderDeclaracionesUploads`/`onDeclaracionUpload`
+    (clon de `renderBiometricosUploads` pero sin el input de fecha —
+    solo el archivo, opcional, uno por persona), nuevo
+    `card._declaracionesEvidencia = { personaKey: {evidencia_id,
+    num_paginas} }`. Se quitó el auto-agregado de una fila "Declaration"
+    por defecto en `documentos_se` al marcar la categoría (ya no aplica,
+    `_documentos_se_por_defecto()` en Python pasó a devolver `[]`) — el
+    tipo por defecto de una fila nueva agregada a mano pasó de
+    `"Declaration"` (ya no es un tipo válido) a
+    `TIPOS_SUPPLEMENTAL_EVIDENCE[0]` ("Psychological Report").
+    `recalcularPaginas()` y `collectExhibits()` actualizados para incluir
+    `declaraciones` (mismo patrón por-persona que `biometricos`, sin
+    fecha) — orden declaraciones-antes-de-documentos_se replicado también
+    ahí para que el preview de páginas del navegador coincida con lo que
+    el backend realmente resuelve.
+- Verificado con pruebas manuales: 3 tests nuevos en `tests/run_tests.py`
+  (`test_declaraciones_por_rider`, `test_declaraciones_omite_sin_evidencia`,
+  `test_declaraciones_modo_manual` — suite completa en 13/13) más un
+  `build_exhibit_table` real (líder + Rider Uno con archivo, Rider Dos sin
+  archivo, un News con archivo, `plural=True`): Rider Dos omitido por
+  completo, líder y Rider Uno con su propio texto de declaración, y el
+  News pluralizado a "Respondents'" (comportamiento esperado — solo las
+  declaraciones evitan la pluralización, no el resto de la categoría).
+  `node --check static/app.js` sin errores. **No se pudo probar el flujo
+  completo en un navegador real** (no hay UI interactiva en este
+  sandbox) — si algo no se ve bien al usarlo en la máquina del despacho,
+  avisar con el detalle exacto.
+
+### Ajuste (mismo día): cada documento de Supplemental Evidence lleva su propio tipo, no solo "Declaration"
+
+- **Reporte del usuario tras probar la entrega anterior**: (1) "me dio el
+  documento sin los adjuntos" — reportó el PDF de un Tab con
+  Supplemental Evidence sin las páginas de evidencia fusionadas; (2)
+  pidió explícitamente poder elegir "qué tipo de documento estoy
+  cargando (si es declaracion o evidencia, etc)" por persona.
+- **Sobre lo de "sin los adjuntos"**: se auditó a fondo todo el pipeline
+  de fusión (`app.py._resolver_paginas_evidencia`, el gate
+  `tiene_evidencia`, `docs_con_pagina`, `combinar_portada_y_evidencia`) y
+  se reprodujo con un caso de prueba real vía Flask test client — la
+  lógica de `declaraciones` resultó ser IDÉNTICA en estructura a la de
+  `biometricos` (que ya funciona en producción), y con evidencia real
+  subida, el gate `tiene_evidencia` sí se dispara y sí intenta fusionar.
+  **No se pudo confirmar ni descartar el bug de forma concluyente en
+  este sandbox**: LibreOffice está roto acá (ver "Limitaciones
+  conocidas") y falla exactamente igual con `biometricos` (control de
+  prueba) que con `declaraciones` — sin conversión a PDF real,
+  `result.pdf_path` es `None` y la fusión nunca se intenta, así que este
+  sandbox no puede confirmar si el problema real estaba en la fusión o
+  en otra cosa. Se le pidió al usuario precisar (PDF vs docx, qué Tab) —
+  confirmó que era el PDF, en el Tab de declaraciones. Si el problema
+  persiste con esta entrega, pedir el mensaje exacto de `evidencia_error`
+  que muestra la UI al generar (ya existe, viene en la respuesta de
+  `/api/generar`) — eso apunta directo a la causa en vez de adivinar.
+- **Sobre elegir el tipo por persona**: el diseño de la sesión anterior
+  (un solo documento "Declaration" fijo por persona, sin opción de tipo)
+  se reemplazó por el mismo patrón que ya usa Form of Identity
+  (`identidades`): cada persona del caso (líder + cada rider) puede
+  agregar MÁS DE UN documento, cada uno con su propio selector de tipo
+  (`TIPOS_DOCUMENTO_PERSONA_SE = ["Declaration", "Psychological Report",
+  "News"]`, con campo de título si es "News") + archivo — botón "+
+  Agregar documento" por persona, "Quitar documento" si tiene más de
+  uno (mínimo 1 fila siempre). El texto sigue nombrando a la persona sin
+  importar el tipo elegido: "Respondent's/Rider's {NOMBRE} Declaration
+  for..." / "...Psychological Report." / "...News about {título}." —
+  `motor/exhibit_builder._declaration_line_text(persona_nombre, tipo,
+  titulo)`, reemplaza a la versión anterior que solo sabía de
+  Declaration.
+  - `TIPOS_SUPPLEMENTAL_EVIDENCE` volvió a incluir `"Declaration"` (había
+    quedado en `["Psychological Report", "News"]` en el primer intento) —
+    la lista libre (`documentos_se`, SIN persona asociada) sigue
+    existiendo para documentos que no pertenecen a nadie en particular
+    (ej. una noticia general del país). Nueva constante
+    `TIPOS_DOCUMENTO_PERSONA_SE` (mismos 3 valores) para el selector por
+    persona — separada de `TIPOS_SUPPLEMENTAL_EVIDENCE` por si en el
+    futuro alguna de las dos listas necesita divergir, aunque hoy tienen
+    el mismo contenido. Ambas se sirven vía `/api/init` →
+    `static/app.js` (`TIPOS_DOCUMENTO_PERSONA_SE`).
+  - `card._declaracionesEvidencia` pasó de `{personaKey: {evidencia_id,
+    num_paginas}}` a `{personaKey: [{id, tipo, titulo, evidencia_id,
+    num_paginas}, ...]}` — mismo patrón que `_identidadesEvidencia`
+    (Form of Identity). Nuevos helpers `_nuevoDocDeclaracion(card)` /
+    `_buscarDocDeclaracion(card, docId)`, clones directos de
+    `_nuevoDocIdentidad`/`_buscarDocIdentidad`. `recalcularPaginas()` y
+    `collectExhibits()` actualizados para recorrer la lista de
+    documentos de cada persona (antes esperaban un único objeto).
+  - `app.py` no necesitó cambios en `_resolver_paginas_evidencia` (ya
+    resolvía cualquier entrada de `declaraciones` con `evidencia_id`,
+    sin importar qué otras claves traiga el dict) — solo se agregó
+    `TIPOS_DOCUMENTO_PERSONA_SE` al import de `motor.exhibit_builder` y
+    a la respuesta de `/api/init`.
+  - Nuevo test `test_declaraciones_multi_tipo_por_persona` (una persona
+    con Psychological Report Y News a la vez) — suite completa en 14/14.
+- Verificado con `motor.fill_engine.generar_documento` real (caso con
+  riders, líder con Declaration, Rider Uno con Psychological Report):
+  ambos textos correctos, `Pgs. 1`/`Pgs. 2` alineados. `node --check
+  static/app.js` sin errores. **Sigue sin poder probarse la fusión real
+  de PDFs en este sandbox** (LibreOffice roto) — si el PDF sigue sin
+  traer los adjuntos con esta entrega, es la señal de que el bug es más
+  profundo de lo que esta auditoría pudo alcanzar por código; pedir el
+  `evidencia_error` exacto del response de `/api/generar` para ese caso.
+
+### Ajuste (2026-08-26): "Pgs." de la 2da persona caía en la línea envuelta de la 1ra — resuelto estimando líneas visuales (NO con spacer)
+
+- El usuario mandó captura real de la tabla TABLE OF CONTENTS, Tab D
+  (Supplemental Evidence, líder + 1 rider, ambos con declaración): el texto
+  "Respondent's Declaration for Support of Asylum Withholding of Removal and
+  Relief Under CAT." (texto FIJO, siempre envuelve a 2 líneas visuales en
+  Word) mostraba "Pgs. 46-52" bien alineado con su primera línea, pero
+  "Pgs. 53-59" (el rango del rider) caía junto a "of Removal and Relief
+  Under CAT." — la SEGUNDA línea envuelta de la declaración del líder — en
+  vez de junto a "Rider's MORALES-ZUNIGA, YORLENY SARAHI", la primera línea
+  del renglón del rider. Es exactamente el mecanismo ya documentado para
+  Biometrics Compliance (Word alinea las celdas de una fila por altura
+  acumulada real, no por conteo de párrafos): un renglón de DESCRIPTION que
+  envuelve a N líneas necesita N párrafos de altura en PAGES, no 1.
+- **PRIMER INTENTO — spacer entre documentos, REVERTIDO (no repetir).** Se
+  metió un `spacer`/`blank` (párrafo vacío) entre cada documento en ambas
+  columnas (`spacer.join`/`blank.join`). El usuario mandó una SEGUNDA
+  captura: (1) el spacer agregaba una línea en blanco VISIBLE entre los dos
+  documentos en DESCRIPTION que él no quería, y (2) el "Pgs." del rider
+  seguía desalineado — 1 spacer aporta 1 línea de compensación, pero el
+  líder envuelve a 2 líneas (necesita 1 línea EXTRA de compensación, no una
+  línea separadora). Un separador fijo de 1 párrafo no modela el
+  envolvimiento variable de cada texto. **No volver a intentar arreglar
+  esto con un separador fijo entre documentos.**
+- **FIX CORRECTO (el que quedó)**: estimar cuántas líneas visuales envuelve
+  el texto de CADA documento y, en PAGES, poner el valor ("Pgs. X-Y") del
+  documento SEGUIDO de `(líneas_visuales - 1)` párrafos `blank` de relleno —
+  DESCRIPTION queda igual que siempre (1 párrafo por documento, SIN
+  separadores, documentos consecutivos como pidió el usuario). Así el valor
+  de cada documento cae en la primera línea de su renglón y el del siguiente
+  en la primera del suyo, sin desfase.
+  - Nuevo `_estimar_lineas_visuales(texto)` en `motor/exhibit_builder.py`:
+    simula el corte de línea greedy de Word usando las métricas Times-Roman
+    de **reportlab** (`pdfmetrics.stringWidth`, misma dependencia que ya usa
+    `pdf_merge` — no agrega dependencias nuevas), contra el ancho útil de la
+    celda DESCRIPTION `_DESC_CELL_ANCHO_UTIL_PTS` (columna 6300 twips menos
+    108 twips de margen de celda por lado = 6084 twips ≈ 304.2pt). Si
+    reportlab no estuviera disponible, degrada a 1 línea (comportamiento
+    viejo sin compensación, nunca rompe la generación).
+  - **Calibrado contra la captura real**: con ese ancho, el estimador da
+    exactamente 2 líneas para el texto del líder (cortando en "...Asylum
+    Withholding" / "of Removal...") y 3 para el renglón del rider
+    MORALES-ZUNIGA (cortando en "...SARAHI" / "...of Removal" / "and Relief
+    Under CAT.") — idéntico a lo que muestra la captura de Word. Resultado
+    para ese caso: PAGES = [`Pgs. 46-52`, blank, `Pgs. 53-59`, blank, blank]
+    → "Pgs. 46-52" en línea visual 1 (junto al líder), "Pgs. 53-59" en línea
+    3 (junto a la 1ra línea del rider).
+  - Nuevo helper compartido `_supplemental_evidence_items(documentos,
+    plural, declaraciones)` que arma la lista ordenada de documentos
+    incluidos con su texto final + evidencia — DESCRIPTION y PAGES lo
+    consumen para NUNCA divergir en qué documentos incluyen, en qué orden,
+    ni con qué texto (el texto es lo que PAGES usa para estimar el
+    envolvimiento). `build_pages_cell_content` ganó un parámetro `plural`
+    (antes no lo recibía) para que el texto de los `documentos_se`
+    pluralizados coincida con el de DESCRIPTION al estimar — se pasa desde
+    `build_exhibit_table`.
+- **Por qué este enfoque SÍ generaliza y el spacer no**: acá la
+  compensación es proporcional al envolvimiento real de CADA texto (2
+  líneas → 1 blank extra, 3 líneas → 2 blanks extra, etc.), estimado por
+  ancho real — no un separador fijo que asume un número de líneas. Un
+  nombre de rider o título de News más largo que envuelva a 4 líneas queda
+  compensado igual, sin tocar nada. **La misma técnica es aplicable a
+  Biometrics Compliance** (que hoy sigue con el enfoque viejo de 1 párrafo
+  por persona + subtítulo repetido, con la misma limitación sin resolver
+  anotada en su sección) — **pero NO se tocó Biometrics** porque el usuario
+  no reportó que esté mal; si lo reporta, reusar `_estimar_lineas_visuales`
+  ahí con el mismo patrón (valor + `(líneas-1)` blanks por renglón), no
+  reinventar.
+- **Limitación que se mantiene**: `_estimar_lineas_visuales` es una
+  ESTIMACIÓN de métricas de fuente — no se pudo verificar el render real en
+  este sandbox (LibreOffice roto). Se calibró para reproducir exactamente la
+  captura real que mandó el usuario, y es estable ante pequeñas variaciones
+  del ancho asumido (108-120 twips de margen dan el mismo conteo), pero si
+  un texto muy particular sigue desalineado en Word real, ajustar con ese
+  caso concreto (revisar el margen de celda real o el ancho de columna), no
+  a ciegas.
+- Tests (`tests/run_tests.py`): el viejo invariante "DESCRIPTION y PAGES con
+  igual número de párrafos" ya NO aplica a supplemental_evidence (PAGES
+  ahora tiene más párrafos: los blanks de compensación). Se reemplazó por
+  `_assert_supplemental_alineado`, que verifica la invariante REAL — cada
+  "Pgs." cae en una línea visual donde EMPIEZA un renglón de DESCRIPTION,
+  nunca en una línea envuelta — modelando la altura acumulada con
+  `_estimar_lineas_visuales`. `test_declaraciones_pgs_alineado_con_su_propio_parrafo`
+  fija además la estructura exacta esperada para el caso de la captura
+  (`["Pgs. 46-52", "", "Pgs. 53-59", "", ""]`). Suite en 15/15.
+
+## Form of Identity: ahora permite más de un documento por persona (2026-08-26)
+
+- **Pedido del usuario**: en el Tab de Form of Identity, permitir que una
+  misma persona (líder o rider) suba más de un documento de identidad —
+  ejemplo dado: el líder tiene pasaporte Y ID, y ambos deben aparecer en
+  la tabla de exhibits, no solo uno.
+- **El backend (`motor/exhibit_builder.py`) ya soportaba esto sin tocar
+  nada**: `_build_form_of_identity_description`/`_build_form_of_identity_pages`
+  siempre iteraron sobre una lista plana `identidades` sin asumir un
+  máximo de una entrada por persona — dos entradas con el mismo
+  `persona_nombre` (ej. `None`/`None` para el líder) ya generaban dos
+  renglones "Respondent's Passport from {país}" / "Respondent's ID from
+  {país}" perfectamente alineados con PAGES. Mismo caso para
+  `app.py._resolver_paginas_evidencia` (resuelve páginas iterando la
+  lista plana, sin importar cuántas entradas comparten persona). Se
+  verificó con una prueba manual (líder con 2 documentos + rider con 1)
+  antes de tocar el frontend, para confirmar que el trabajo real estaba
+  del lado de la UI.
+- **El límite estaba 100% en `static/app.js`**: `renderIdentidadesUploads`
+  generaba exactamente UNA fila (tipo de documento + archivo) por persona
+  de `personasDelCaso()`, con el estado guardado en
+  `card._identidadesEvidencia` como `{personaKey: {evidencia_id,
+  num_paginas}}` — un solo documento posible por persona, sin manera de
+  agregar un segundo.
+- Fix: `card._identidadesEvidencia` pasó a ser `{personaKey: [{id,
+  tipo_doc, evidencia_id, num_paginas}, ...]}` — una LISTA por persona en
+  vez de un objeto único, clonando el patrón que ya usaba
+  `_documentosSE`/`renderDocumentosSE` (Supplemental Evidence) para
+  agregar/quitar documentos dinámicamente: cada persona ahora tiene su
+  propio botón "+ Agregar documento" y, si tiene más de uno, un botón
+  "Quitar documento" por fila (con al menos 1 fila siempre presente, no
+  se puede dejar a una persona en cero documentos). Nuevos helpers
+  `_nuevoDocIdentidad(card)` (genera `id` único tipo `id_<n>_<contador>`,
+  mismo patrón que `se_<n>_<contador>` de Supplemental Evidence) y
+  `_buscarDocIdentidad(card, docId)` (busca un documento por su `id` en
+  todas las personas, usado por los listeners de tipo/archivo). El tipo
+  de documento y el `evidencia_id`/`num_paginas` ahora se leen del propio
+  objeto en `card._identidadesEvidencia` (actualizado directo por los
+  listeners de `change`), no de un `<select>` consultado al vuelo en
+  `collectExhibits()` — mismo patrón que ya usaba `_documentosSE`.
+- `recalcularPaginas()` y `collectExhibits()` actualizados para recorrer
+  la lista de documentos de cada persona (antes esperaban un único
+  objeto/valor por persona) — `collectExhibits()` ahora usa
+  `personasDelCaso().flatMap(...)` para aplanar persona × documentos en
+  la lista `identidades` plana que ya espera el backend.
+- Verificado: `motor.exhibit_builder.build_description_cell_content`/
+  `build_pages_cell_content` con líder (pasaporte + ID) + rider
+  (pasaporte) real produce 4 párrafos alineados 1 a 1 en DESCRIPTION y
+  PAGES, con los textos "Respondent's Passport from Mexico",
+  "Respondent's ID from Mexico" y "Rider's Ana Rider Passport from
+  Mexico" en el orden correcto. Suite `tests/run_tests.py` sigue en
+  10/10 (no cubre este escenario puntual, pero confirma que no se rompió
+  nada existente). `node --check static/app.js` sin errores de sintaxis.
+  **No se pudo probar el flujo completo en un navegador real** (no hay UI
+  interactiva en este sandbox) — si al usarlo en la máquina del despacho
+  algo no se ve bien (botones, alineación de las filas), avisar con el
+  detalle exacto.
+
+## Plantilla `written-pleadings` — creada desde un documento YA LLENADO, sin SDT de fábrica (2026-08-25)
+
+- **Punto de partida distinto a todas las demás plantillas**: el usuario
+  subió `Template_Written_Pleadings.docx`, que NO era una plantilla en
+  blanco sino un documento real ya generado para un caso (Insuasti Ruiz,
+  A# 245-870-935) — **cero** `<w:sdt>`, bookmarks o campos MERGEFIELD.
+  Instrucción del usuario: "lo que está subrayado [en Word] son los datos
+  que debes pedir". Hubo que verificar el subrayado corriendo por
+  `r.underline` en cada run (no fiarse de una lectura visual del texto
+  denso con marcadores — en un primer barrido se leyó mal un run y se
+  reportó "no subrayado" cuando sí lo estaba, ver más abajo).
+- **Campos ESTÁNDAR del caso reutilizados tal cual** (no subrayados en el
+  ejemplo, porque ya existen en el Paso 1 y se repiten en todas las
+  plantillas): `abogado`, `abogado_firma_coma`, `cliente_nombre` (8
+  apariciones), `a_number` (2), `corte_sede`, `juez`, `proxima_audiencia`,
+  `preparador`, `preparador_mayus`.
+- **8 campos nuevos en el cuerpo principal** (subrayados, capturados como
+  `campos_extra` de esta plantilla — no se guardan en el caso, se piden en
+  cada corrida): `fecha_nta`, `alegaciones_admitidas`,
+  `cargo_removibilidad`, `designacion_pais_remocion`, `formas_alivio`,
+  `horas_estimadas`, `idioma_interprete`, `dialecto_interprete`.
+  **Corrección durante el análisis**: en el primer reporte al usuario se
+  dijo que el blanco del dialecto NO estaba subrayado — era un error de
+  lectura (`r.underline` daba `True`); se corrigió antes de tocar el
+  `.docx` y sí quedó como campo. Los blancos que de verdad NO estaban
+  subrayados (denies allegation(s), denies charge(s), segunda forma de
+  alivio "(2) ____") se dejaron fijos, confirmado explícitamente por el
+  usuario en un `AskUserQuestion` ("solo lo subrayado").
+- **Dos falsos positivos de subrayado descartados** (son estilo tipográfico
+  de encabezado de sección, no campos): "PROOF OF SERVICE" y "DECLARACIÓN
+  DE ALEGATOS DEL DEMANDADO". Confirmado cruzando con
+  `motion-withdraw-no-cooperation`, que también subraya "PROOF OF SERVICE"
+  sin que sea un campo — es la convención tipográfica del despacho para
+  esos títulos, no una instrucción de llenado.
+- **Hallazgo importante que casi se pasa por alto**: el documento trae un
+  **cuadro de texto flotante** ("CERTIFICATE OF TRANSLATION") que
+  `python-docx`'s `Document.paragraphs` **no recorre** (vive dentro de
+  `<w:txbxContent>`, anidado en un `<w:drawing><wp:anchor>`) — un primer
+  barrido con `d.paragraphs` no lo vio en absoluto. Solo apareció al
+  inspeccionar `document.xml` crudo. Si se vuelve a analizar una plantilla
+  nueva a partir de un `.docx` de ejemplo, **no asumir que `d.paragraphs`
+  cubre todo el documento** — revisar también `<w:txbxContent>` con
+  regex/XML crudo.
+  - Ese cuadro de texto trae, quemada, la firma escaneada real (JPEG,
+    `rId7`) — **del TRADUCTOR (Bruno Briz), no del cliente** como se creyó
+    en un primer momento por la posición aproximada del offset en el XML.
+    Se verificó con precisión buscando cada aparición de `rId7` y mirando
+    el párrafo que la contiene: las dos (una en la rama moderna
+    `mc:Choice`/drawingML, otra en la legacy `mc:Fallback`/VML del mismo
+    cuadro) caen en la línea de firma "/S/Bruno B. . Bruno Briz
+    {fecha}". Se eliminó por completo (imagen + relationship +
+    `word/media/image1.jpeg`), siguiendo la regla ya establecida
+    "ninguna plantilla lleva firma quemada/anclada".
+  - 3 campos nuevos ahí: `traductor` (persona, 2 apariciones dentro de la
+    rama Choice), `documento_traducido` (nombre del documento traducido,
+    ej. "DECLARATION OF PLEADINGS"), y `traductor_abreviado` — este
+    último es **derivado**, no se pide en la UI: `fill_engine.
+    _persona_abreviada("Bruno Briz")` → `"Bruno B."` (primer nombre +
+    inicial del apellido), mismo patrón que `_abogado_firma`/
+    `_abogado_nombre`.
+  - **Solo se le hizo cirugía de SDT a la rama moderna (`mc:Choice`)** del
+    cuadro de texto. La rama legacy VML (`mc:Fallback`, que Word casi
+    nunca renderiza en software actual) se dejó con el texto literal del
+    caso de ejemplo (Bruno Briz / DECLARATION OF PLEADINGS) sin convertir
+    a campo — no es información sensible de cliente (es el nombre de un
+    preparador interno, ya público en `catalogos.json`), pero si el
+    despacho quiere consistencia total ahí también, es trabajo pendiente
+    documentado en `field_map.json["_notas"]`.
+- **Cambio genérico en `motor/fill_engine.py`** para poder poner una firma
+  dinámica de una persona que NO es `abogado`/`preparador` del caso: la
+  firma de "traductor" es un campo **por corrida** (`document_instance`),
+  no del caso. `_firma_lookup_nombre`/`_apply_firmas_imagen` ahora reciben
+  `values` (el dict ya resuelto de caso + instancia) en vez de solo
+  `case`, y cada entrada de `field_map["firmas_imagen"]` puede traer un
+  `"nombre_field"` opcional indicando de qué clave de `values` sacar el
+  nombre — sin `nombre_field` el comportamiento es idéntico al de siempre
+  (compatibilidad total con las 4 plantillas existentes que ya usaban
+  `firmas_imagen`). `written-pleadings` usa `"nombre_field": "traductor"`,
+  `"categoria": "preparadores"` (reutiliza `firmas/preparadores/`, ya que
+  Bruno Briz está en `catalogos.json` como preparador).
+- **Validación genérica nueva en `static/app.js` (`generarDocumento`)**:
+  antes de armar `document_instance`, ahora se valida que **todo**
+  `campos_extra` de la plantilla activa tenga un valor no vacío (bloquea
+  con "Falta el campo {etiqueta}" si no). Antes esto no existía para
+  ningún `campos_extra` de ninguna plantilla (ej. `direccion_conocida` de
+  Motion to Withdraw tampoco se validaba) — se generalizó al agregar
+  `written-pleadings` porque acá el riesgo es más serio: sin esta
+  validación, dejar un campo nuevo vacío no tira error, simplemente deja
+  el placeholder que quedó grabado en el `.docx` al construir la
+  plantilla (texto real del caso Insuasti Ruiz/Bruno Briz) — un documento
+  de OTRO cliente podría salir con alegaciones/cargos/fecha de NTA que no
+  son las suyas. Con la validación nueva esto ya no puede pasar desde la
+  UI. **Si se toca esta lógica, no volver a quitar la validación
+  genérica** — protege a `written-pleadings` y de paso a
+  `motion-withdraw-*`.
+- Cirugía técnica (por si se repite este proceso con otra plantilla sin
+  SDT de fábrica): `unpack` → `motor.ooxml_utils.merge_runs_in_document_xml`
+  (limpia atributos `rsid` y fusiona runs adyacentes de formato idéntico,
+  simplifica mucho encontrar los límites de cada campo) → localizar cada
+  campo por su texto exacto (con `occurrence` para desambiguar
+  repeticiones, ej. `cliente_nombre` aparece 8 veces) → envolver en
+  `<w:sdt><w:sdtPr><w:id w:val="…"/>{rPr copiado del run original}
+  </w:sdtPr><w:sdtContent>{run(s) original(es)}</w:sdtContent></w:sdt>` →
+  `rezip`. Las líneas de firma que traen tabs+espacios+guiones bajos TODO
+  en un mismo `<w:r>` (común después de `merge_runs`) hay que partirlas a
+  mano: el prefijo (tabs que posicionan la línea) queda FUERA del SDT, el
+  mecanismo `_apply_firmas_imagen` reemplaza el contenido completo del
+  SDT y perdería el posicionamiento si el prefijo quedara adentro. IDs
+  usados: rango `920000001`-`920000032` (32 campos en total, ver
+  `field_map.json["_notas"]` para la lista completa).
+- Verificado con `motor.fill_engine.generar_documento` real (caso y
+  campos de prueba, no el caso real Insuasti Ruiz): `validation_ok=True`,
+  y se contó cada valor de prueba en el XML resultante — las 8
+  apariciones de `cliente_nombre`, las 2 de `a_number`, las 2 de
+  `traductor`, la forma derivada `traductor_abreviado` correcta, y CERO
+  apariciones de `rId7` (la firma quemada del traductor ya no está en
+  ningún documento generado). También corrida la suite `tests/run_tests.py`
+  completa (10/10) para confirmar que no se rompió nada de lo existente.
+
+## `written-pleadings`: corregido contra un SEGUNDO ejemplo real con riders (2026-08-25)
+
+- El primer ejemplo (Insuasti Ruiz) no tenía riders, así que no dejaba ver
+  que `cliente_nombre` necesita TRES formas distintas según el lugar del
+  documento. El usuario compartió un segundo documento real ya llenado
+  (Mendez Rodriguez, Sheraryn Mileny — caso CON riders) para comparar, y
+  confirmó la regla exacta:
+  - **`cliente_nombre`** (verbatim tal como está en el caso, + " et al" si
+    hay riders) — SOLO en el renglón superior "Attorney for Respondent(s)"
+    y en la caja de caption "In the Matter of".
+  - **`cliente_nombre_mayus`** (TODO EN MAYÚSCULAS, + " ET AL" si hay
+    riders) — en las firmas bajo el abogado, bajo cada Declaration
+    (inglés/español) y en el sello antes de "PROOF OF SERVICE".
+  - **`cliente_nombre_lead_mayus`** (SOLO el nombre del líder, MAYÚSCULAS,
+    **NUNCA** "et al" aunque haya riders) — ÚNICAMENTE en el "I, ___,"/
+    "Yo, ___," de las dos Declaration. Es una declaración personal de UNA
+    persona, nunca colectiva — por eso no lleva a los riders aunque el
+    resto del documento sí. **El ejemplo real de Sheraryn tenía "ET AL" en
+    la Declaración en español — es un error de ese documento puntual, no
+    la regla; la plantilla NO debe repetirlo** (confirmado explícitamente
+    por el usuario).
+  - Sin riders, los tres campos coinciden en valor — por eso esta
+    distinción no se notó con el primer ejemplo (Insuasti).
+  - Los 8 `<w:sdt>` de `cliente_nombre` ya estaban separados uno por
+    ocurrencia desde la cirugía original — el fix fue solo reasignar
+    `grupos_sync_manual` en `field_map.json` (qué IDs van a cuál de los
+    tres nombres) y agregar los dos derivados nuevos a
+    `fill_engine._resolve_values` (`nombre_para_documento(case).upper()` y
+    `case["cliente_nombre"].upper()`). **No hizo falta tocar el `.docx`.**
+- **`traductor_abreviado` dejó de ser un campo derivado.** Se había
+  calculado automáticamente ("Bruno Briz" → "Bruno B.", primer nombre +
+  inicial del apellido) porque solo había un ejemplo. El segundo ejemplo
+  (traductora Roxana Banks) firma "RB." (iniciales de ambos nombres, sin
+  espacio) — un formato distinto, que confirma que NO hay una regla fija:
+  cada quien abrevia su firma como quiere. Fix: `traductor_abreviado` pasó
+  a ser un `campos_extra` de texto libre (se pide junto con `traductor` en
+  cada corrida), ya no se calcula. Se borró el helper
+  `_persona_abreviada` de `fill_engine.py` (quedó sin uso).
+- **Nombre del despacho en el membrete**: se detectó que varía entre
+  documentos reales ("KOSTIV & ASSOCIATES, P.C." en Insuasti, "KOSTIV
+  CARDINAL INTERNATIONAL LAW GROUP" en Sheraryn, "Kostiv CARDINAL
+  INTERNATIONAL LAW GROUP CORP." en `webex-motion`/John Negron, cada uno
+  con teléfono distinto). Se le preguntó al usuario — decisión original
+  (2026-08-25): dejarlo fijo como estaba en el ejemplo de Insuasti.
+  **Revertido/actualizado 2026-08-26 a pedido explícito del usuario**: las
+  4 apariciones de texto fijo "KOSTIV & ASSOCIATES, P.C." (2, en el
+  membrete de la primera hoja y en el sello antes de PROOF OF SERVICE) y
+  "Kostiv & Associates" (2, dentro del cuadro de texto "Certificate of
+  Translation", bajo la firma del traductor) se reemplazaron por texto
+  literal fijo "KOSTIV CARDINAL INTERNATIONAL LAW GROUP" — **solo en esta
+  plantilla**, no se tocó `webex-motion` (que ya trae su propia variante
+  "Kostiv CARDINAL INTERNATIONAL LAW GROUP CORP." de fábrica, sin tocar).
+  Edición directa por `str.replace` sobre `word/document.xml` con
+  `ooxml_utils.unpack`/`rezip` (no es un campo/SDT, es texto fijo de la
+  plantilla en las 4 ocurrencias). Verificado: 32 SDT intactos,
+  `generar_documento` real inserta "KOSTIV CARDINAL INTERNATIONAL LAW
+  GROUP" x4 y CERO ocurrencias de "Kostiv" viejo, `tests/run_tests.py`
+  10/10.
+- Verificado con `motor.fill_engine.generar_documento` real, caso de
+  prueba CON riders (replicando el patrón de Sheraryn): los tres formatos
+  de `cliente_nombre` cayeron exactamente en los lugares correctos,
+  incluyendo que la Declaración en español NO lleva "ET AL" (a diferencia
+  del ejemplo real, que sí lo tenía por error). `traductor_abreviado`
+  libre ("RB.") se insertó tal cual. Suite `tests/run_tests.py` sigue en
+  10/10.
+
+## `written-pleadings`: resaltado amarillo heredado + nombres largos rotos en 3 firmas (2026-08-25)
+
+- El usuario generó un documento real (Sheraryn, con riders) con la
+  plantilla y mandó capturas de pantalla comparándolo contra el documento
+  real de referencia. Dos problemas visibles:
+  1. **Todo el texto de los campos salía resaltado en amarillo.** El
+     `.docx` de ejemplo original (Insuasti) traía `<w:highlight
+     w:val="yellow"/>` en 61 lugares (probablemente el abogado resaltó el
+     documento para revisarlo) — al copiar el `rPr` de cada run original
+     al `sdtPr` de su SDT (para que el valor de reemplazo mantuviera el
+     mismo formato), el resaltado se copió también sin querer. Fix:
+     `re.sub(r"<w:highlight[^/]*/>", "", xml)` sobre TODO `document.xml`
+     (no solo los campos) — el resaltado no debe estar en ningún lado de
+     esta plantilla.
+  2. **El nombre del cliente + "ET AL" se rompía a 2 líneas cayendo al
+     margen izquierdo** en 3 renglones de firma (bajo el abogado, bajo
+     cada Declaration en inglés/español) — el mismo bug ya documentado
+     para `webex-motion` (ítem 8 del checklist): tabs + espacios literales
+     calibrados para el nombre corto de Insuasti ("INSUASTI RUIZ, EDWIN
+     ALBERTO", 29 caracteres) se quedan cortos con un nombre más largo
+     ("MENDEZ RODRIGUEZ, SHERARYN MILENY ET AL", 40 caracteres). A
+     diferencia de `webex-motion` (que se arregló con `w:ind w:left` real),
+     acá se comparó directamente contra el `.docx` real de Sheraryn (que
+     SÍ se ve bien) y se igualó la cantidad exacta de tabs que usa ese
+     documento que funciona: de 5/6/7 tabs (+ hasta 22 espacios sueltos)
+     a 4/4/5 tabs respectivamente en los 3 renglones — confirmado que los
+     3 `paraId` coinciden exactamente entre ambos `.docx`, así que es la
+     misma plantilla, solo con distinto padding. Ver
+     `plantillas/written-pleadings/field_map.json` para los IDs exactos
+     (`920000005`, `920000007`, `920000009`).
+- **`dialecto_interprete` pasó a ser opcional.** Antes la validación
+  genérica de `campos_extra` (ver ítem 17 del checklist) lo exigía como
+  cualquier otro campo — pero el usuario aclaró que si no se especifica
+  dialecto, debe quedar la línea en blanco original ("___________"), no
+  bloquear la generación. Fix: nueva clave `"opcional": true` en su
+  entrada de `registro.json` → `static/app.js` (`generarDocumento`) la
+  respeta (`if (!c.opcional && !valor)`) → `fill_engine._resolve_values`
+  convierte string vacío a `None` con `... or None` (si no, un string
+  vacío SÍ es distinto de `None` y igual pisaría el placeholder con nada).
+  Es el ÚNICO campo de esta plantilla con este tratamiento — los demás
+  (`fecha_nta`, `cargo_removibilidad`, etc.) siguen siendo obligatorios
+  porque su placeholder de fábrica es texto real del caso Insuasti (dejar
+  uno vacío filtraría datos de ese caso a otro cliente), mientras que el
+  placeholder de `dialecto_interprete` siempre fue un blanco genérico
+  ("___________"), seguro de dejar como está.
+- Las líneas de firma (imagen dinámica de abogado/preparador/traductor)
+  YA se comportan así desde que se creó la plantilla — sin PNG cargado
+  para esa persona, cae al texto de blanco de siempre (mismo mecanismo
+  `_apply_firmas_imagen` de las demás plantillas). No hizo falta tocar
+  nada ahí, solo confirmar que seguía intacto tras estos cambios.
+- Verificado con `motor.fill_engine.generar_documento` real (caso con
+  riders, replicando Sheraryn): `<w:highlight` = 0 ocurrencias en el
+  documento generado, los 4 renglones con "MENDEZ RODRIGUEZ..." muestran
+  4/4/5/0 tabs (coincide exacto con el documento real de referencia), y
+  con `dialecto_interprete=""` el placeholder "___________" sigue
+  presente en el XML. Suite `tests/run_tests.py` sigue en 10/10.
+
+## `written-pleadings`: el encabezado/caption debe verse en Title Case sin importar cómo se tipeó el caso (2026-08-26)
+
+- El usuario mandó captura de un caso con `cliente_nombre` tipeado en
+  MAYÚSCULAS en el Paso 1 — el encabezado "Attorney for Respondent(s)" y
+  la caja de caption "In the Matter of" salían también en MAYÚSCULAS
+  (porque usaban `cliente_nombre` = `nombre_para_documento(case)` tal
+  cual), y reportó que eso "movía el formato" — quería esos dos lugares
+  siempre en Title Case (ej. "Mendez Rodriguez, Sheraryn Mileny et al"),
+  sin importar cómo se haya tipeado el nombre en el caso.
+- **No se tocó `nombre_para_documento`/`case_store` ni la clave
+  `"cliente_nombre"` de `_resolve_values`** — esas las usan TAMBIÉN
+  `i589-tab-cover`, `webex-motion` y las 3 `motion-withdraw-*`, que
+  siempre mostraron el nombre tal cual se tipeó y nadie reportó problema
+  con eso; cambiar su comportamiento habría afectado 4 plantillas en
+  producción sin que nadie lo pidiera. Se agregó un campo derivado NUEVO,
+  exclusivo de `written-pleadings`: `cliente_nombre_titulo` =
+  `case["cliente_nombre"].title()` (+ " et al" si hay riders, en
+  minúscula) — `fill_engine._nombre_titulo`. Solo esta plantilla usa
+  Title Case en el nombre; las demás siguen mostrando el nombre tal cual
+  está en el caso.
+- `field_map.json` de `written-pleadings`: el grupo que antes se llamaba
+  `cliente_nombre` (ids `920000003`/`920000004`, encabezado + caption) se
+  renombró a `cliente_nombre_titulo`. `cliente_nombre_mayus` y
+  `cliente_nombre_lead_mayus` (firmas y Declaration) no cambiaron — siguen
+  forzando `.upper()`, inmunes a este problema.
+- Verificado con `generar_documento` real, caso con `cliente_nombre` en
+  MAYÚSCULAS: encabezado/caption salen "Mendez Rodriguez, Sheraryn Mileny
+  et al" (Title Case), firmas/sello siguen "MENDEZ RODRIGUEZ, SHERARYN
+  MILENY ET AL" (mayúsculas). Suite `tests/run_tests.py` sigue en 10/10.
+
+## `written-pleadings`: saltos de página reales entre secciones (2026-08-26)
+
+**Nota: esta sección documenta el caso concreto donde se aplicó la técnica
+por primera vez — la técnica en sí (salto real en dos pasos) es GENERAL,
+no exclusiva de esta plantilla; ver "Técnica general: saltos de página
+reales reemplazando relleno de párrafos vacíos" más abajo para la versión
+reutilizable.**
+
+- **Pedido explícito del usuario** (a diferencia del intento de un solo
+  paso en `webex-motion`, donde este enfoque se probó sin pedirlo y se
+  revirtió — ver "`webex-motion`: saltos de página por sección" más abajo,
+  ese ítem sigue vigente para `webex-motion` específicamente mientras no
+  se reintente con el patrón de dos pasos). Motivo: al agregar el
+  ejemplo con dos cargos separados por coma en `cargo_removibilidad`, el
+  campo pasó a ocupar una línea más y **todo lo que venía después se
+  recorrió** — la plantilla nunca tuvo saltos de página reales, cada
+  sección caía en su página por puro volumen de párrafos vacíos de
+  relleno (mismo patrón ya documentado para `webex-motion`).
+- Fix: `<w:pageBreakBefore/>` agregado a 3 párrafos (por `paraId`, edición
+  directa sobre `WRITTEN_PLEADINGS.docx` con `ooxml_utils.unpack`/`rezip`):
+  `1911CE8B` ("RESPONDENT'S PLEADING DECLARATION"), `4B578A3B`
+  ("DECLARACIÓN DE ALEGATOS DEL DEMANDADO"), y `7D6FEC8A` — este último es
+  el sello de nombre/A# que va JUSTO ANTES de "PROOF OF SERVICE", no el
+  párrafo del título en sí, para que el sello no quede huérfano en la
+  página anterior separado de su encabezado.
+- **A propósito NO se tocó el relleno de párrafos vacíos existente entre
+  secciones** (mismo criterio conservador que ya se documentó para
+  `webex-motion`: quitar el relleno es lo que rompió el formato la vez
+  pasada) — el salto real se agregó AL FINAL de cada bloque de relleno,
+  como una capa adicional, no como reemplazo. Si en el futuro se quiere
+  además recortar el relleno sobrante, es un cambio aparte, a pedido
+  explícito y con verificación visual real.
+- El cuadro de texto flotante "Certificate of Translation" (anchorado en
+  un párrafo ANTES de `4B578A3B`) no se ve afectado — un
+  `pageBreakBefore` en un párrafo posterior no cambia la página del
+  párrafo que aloja el anchor, que sigue determinada por el flujo natural
+  hasta ese punto (sin cambios).
+- Verificado con `generar_documento` real: XML bien formado, 32 SDT
+  intactos, 3 `<w:pageBreakBefore/>` presentes en el documento generado,
+  `validation_ok=True`. Suite `tests/run_tests.py` sigue en 10/10.
+- **Limitación conocida, igual que con `webex-motion`: no se pudo
+  verificar el render visual real en este sandbox** (LibreOffice roto,
+  ver "Limitaciones conocidas" más abajo). A diferencia de la vez que
+  falló, acá se optó por el enfoque más conservador posible (agregar
+  saltos sin tocar el relleno existente, un solo `paraId` por sección) —
+  pero si al abrir el documento en Word real se ve mal (páginas extra en
+  blanco, algo desalineado), avisar con el detalle exacto para ajustar,
+  no asumir que quedó bien solo porque la estructura XML es válida.
+- **Ajuste (mismo día): el usuario confirmó que sí quedaron hojas en
+  blanco de más** (justo el riesgo que se había anotado arriba: el
+  relleno de párrafos vacíos, calibrado para simular el salto de página
+  a mano, ahora se suma AL salto real y sobra — si el relleno por sí solo
+  ya casi llenaba una página, el resultado es una página en blanco extra
+  antes de que el `pageBreakBefore` real haga efecto). Se quitó el
+  relleno redundante: 27 párrafos vacíos antes de `1911CE8B`, 17 antes de
+  `4B578A3B`, 16 antes de `7D6FEC8A` (60 en total). **Cuidado si se repite
+  esto en otra plantilla**: el cuadro de texto flotante "Certificate of
+  Translation" vive DENTRO de un solo `<w:p>` de nivel superior (el que
+  aloja el `wp:anchor`) que contiene texto crudo con sus propios
+  `<w:p>...</w:p>` internos (las 2 ramas Choice/Fallback) — un split
+  ingenuo con regex no-greedy confunde esos párrafos internos con
+  párrafos del cuerpo y puede borrar parte del cuadro de texto por error.
+  Se usó un tokenizer con profundidad real (cuenta `<w:p ...>`/`</w:p>`,
+  ignora `<w:p .../>` autocontenido que no tiene cierre aparte — esto
+  rompía el conteo de profundidad la primera vez que se intentó) para
+  identificar los párrafos de nivel superior de verdad antes de borrar.
+- Verificado de nuevo tras el recorte: XML bien formado, 32 SDT intactos,
+  3 `pageBreakBefore` siguen presentes, el cuadro de texto conserva su
+  `wp:anchor` único y sus 2 ramas (`mc:Choice`/`mc:Fallback`) sin tocar,
+  y un `generar_documento` real con el mismo caso de prueba (Sheraryn,
+  con riders) sigue insertando todo correctamente. Suite
+  `tests/run_tests.py` sigue en 10/10. **Sigue sin poder verificarse el
+  render visual real** (misma limitación de LibreOffice) — si el usuario
+  reporta que TODAVÍA queda alguna hoja en blanco de más, probablemente
+  haya que ajustar puntualmente esa sección en particular, no repetir el
+  recorte a ciegas en las tres por igual.
+
+## Técnica general: saltos de página reales reemplazando relleno de párrafos vacíos
+
+**No es exclusiva de `written-pleadings`** — es el patrón a seguir en
+CUALQUIER plantilla que finja saltos de página entre secciones con runs
+largos de párrafos vacíos (en vez de `<w:pageBreakBefore/>` real), cuando
+el usuario pida arreglar ese desborde. Ya se probó de dos formas distintas
+con resultados opuestos, y la diferencia importa:
+
+- **`webex-motion` (2026-08-19): un solo paso — agregar el salto Y quitar
+  el relleno viejo al mismo tiempo. Resultado: "se arruinó el formato",
+  revertido.** (detalle en "`webex-motion`: saltos de página por sección"
+  más arriba).
+- **`written-pleadings` (2026-08-26): dos pasos separados. Resultado:
+  funcionó, confirmado por el usuario.**
+  1. Agregar `<w:pageBreakBefore/>` real al primer párrafo de cada
+     sección, SIN tocar el relleno de párrafos vacíos existente todavía.
+     Esto por sí solo puede dejar páginas en blanco de más (el relleno
+     viejo, calibrado a mano para simular el salto, ahora se suma AL
+     salto real) — es un resultado esperado de este paso, no un fallo.
+  2. Solo después de que el usuario confirme que sobran páginas en
+     blanco, quitar el relleno redundante que quedó inmediatamente ANTES
+     de cada punto con salto real nuevo (los párrafos vacíos entre el
+     final del contenido anterior y el `paraId` con el
+     `pageBreakBefore`), dejando el resto de la plantilla intacto.
+- **Por qué separar en dos pasos evita el problema que rompió
+  `webex-motion`**: no está confirmado con certeza qué exactamente rompió
+  el formato la vez que se hizo todo junto (no se pudo verificar render
+  visual real, LibreOffice roto en este sandbox) — pero hacerlo en dos
+  pasos permite verificar/confirmar cada cambio por separado en vez de
+  apostar a que la combinación completa sale bien a la primera. Si se
+  reintenta esta técnica en `webex-motion` (requiere pedido explícito del
+  usuario, ver ítem revertido arriba) o en cualquier otra plantilla,
+  **seguir el mismo patrón de dos pasos**, no el de un solo paso que ya
+  falló una vez.
+- **Cirugía del paso 2, técnica reutilizable**: identificar los párrafos
+  vacíos inmediatamente anteriores al `paraId` de destino con un tokenizer
+  con profundidad real de `<w:p>` (cuenta aperturas/cierres, ignora
+  explícitamente `<w:p .../>` autocontenido que no tiene cierre aparte —
+  un split ingenuo con regex no-greedy confunde párrafos internos de un
+  cuadro de texto flotante con párrafos del cuerpo, y puede borrar parte
+  de ese cuadro de texto por error). Ver
+  `/tmp/.../scratchpad/wp_build/trim_blank_padding.py` (no versionado en
+  el repo, script de referencia de esa sesión) para la implementación
+  completa del tokenizer.
+- Sigue aplicando la limitación de siempre: **no se puede verificar el
+  render visual real en este sandbox** (LibreOffice roto) — cualquier
+  aplicación de esta técnica a una plantilla nueva debe avisarse al
+  usuario como no verificada visualmente, y ajustarse con el detalle
+  exacto que reporte tras probarla en Word real.
+
+## Archivos que NO se deben modificar sin instrucción explícita
+
+- `plantillas/*/*.dotx` y `plantillas/*/*.docx` — plantillas originales del
+  despacho. Cualquier cambio de layout/footer/margen a nivel de plantilla
+  requiere pedir confirmación primero (ver el caso del footer revertido).
+- `plantillas/eoir-33-change-address/EOIR_33.pdf` — formulario oficial
+  fijo, no se toca.
+- `case_store/*.json` — datos reales de clientes, no se sube a git
+  (`.gitignore`). No crear/dejar ahí archivos de prueba; si un test los
+  genera, borrarlos antes de commitear.
+
+## Limitaciones conocidas de este entorno (sandbox de esta sesión)
+
+- **LibreOffice/`soffice` está roto en este sandbox** para conversión
+  docx→PDF (falla con `Error: source file could not be loaded` incluso en
+  un docx trivial recién creado). No es un bug del código del proyecto.
+  Verificación visual del resultado (`motor/pdf_tools.convert_to_pdf` +
+  `rasterize`) no es confiable aquí — la verificación debe hacerse por
+  inspección estructural directa (unzip + XML del `.docx`, atributos de
+  pypdf del `.pdf`) en vez de render visual. En la máquina real del
+  despacho (Windows, con LibreOffice/Word instalados vía `instalar.bat`)
+  esto sí funciona normalmente.
+- **`git push` falla siempre con 403** ("Resource not accessible by
+  integration") en esta sesión. Workaround establecido: entregar los
+  cambios vía `git archive --format=zip HEAD` + `SendUserFile`, además del
+  commit local normal.
+
+## Traspaso a otro asistente con Word (2026-08-26) — `HANDOFF_CHATGPT.md`
+
+- A pedido del usuario se generó `HANDOFF_CHATGPT.md` (en la raíz del repo)
+  para transferir el proyecto a ChatGPT, que **sí tiene Word** y puede
+  hacer la verificación visual que este sandbox nunca pudo (LibreOffice
+  roto, ver arriba). Es un resumen curado de este mismo `CLAUDE.md` +
+  instrucciones de qué verificar visualmente. `CLAUDE.md` sigue siendo la
+  referencia exhaustiva; el handoff es el mapa de entrada.
+- **La razón del traspaso es exactamente la limitación de LibreOffice**: hay
+  varias cosas marcadas "no verificado visualmente" a lo largo de este
+  archivo que un entorno con Word puede cerrar. Las principales candidatas a
+  verificación visual (documentadas en detalle en sus propias secciones):
+  1. **Alineación PAGES ↔ DESCRIPTION** en la tabla de exhibits, para textos
+     que envuelven a 2+ líneas — el fix de `_estimar_lineas_visuales`
+     (Supplemental Evidence) está calibrado contra una captura pero nunca se
+     renderizó en Word real; y Biometrics Compliance sigue con el enfoque
+     viejo sin compensación de wrap (mismo patrón de bug latente, no tocado
+     porque nadie reportó que esté mal).
+  2. **Saltos de página** en `written-pleadings` (y el intento revertido en
+     `webex-motion`).
+  3. **Firmas dinámicas** `wp:inline` — que salgan una sola vez, sin flotar.
+- Si el proyecto vuelve a este entorno después de que ChatGPT lo haya
+  tocado, **releer `HANDOFF_CHATGPT.md` y este `CLAUDE.md`** y confirmar qué
+  se verificó/cambió del otro lado antes de seguir — pueden haber quedado
+  ajustes de layout hechos con Word a la vista que acá no se pueden validar.
+  Mantener ambos archivos sincronizados si se hacen cambios grandes.
+
+## Arquitectura rápida (para no releer todo cada vez)
+
+- `app.py` — servidor Flask, endpoints de caso/generación/output.
+- `motor/fill_engine.py` — llena el `.docx`/`.dotx` reemplazando SDT/campos
+  según `field_map.json`, arma tabla de exhibits y dividers vía
+  `exhibit_builder.py`, maneja firmas como imagen.
+- `motor/exhibit_builder.py` — construye el XML fijo de la tabla de
+  exhibits y los dividers por categoría (Country Conditions, Form of
+  Identity, etc.), usando fragments literales en `plantillas/<id>/fragments/`.
+- `motor/pdf_merge.py` — inserta y numera las páginas de evidencia/adjuntos
+  dentro del PDF de portada ya convertido (ver regla de numeración arriba).
+  También trae heurísticas de sugerencia (`sugerir_anio`, `sugerir_pais`,
+  etc.) que leen texto de las primeras páginas del PDF subido.
+- `motor/pdf_form_fill.py` — llena el AcroForm de `EOIR_33.pdf` directo
+  (sin pasar por Word), con overlays puntuales para iniciales/firma.
+- `motor/pdf_tools.py` — conversión a PDF (Word/LibreOffice) y
+  rasterización a imágenes para la verificación visual en la UI.
+- `motor/ooxml_utils.py` — helpers genéricos de bajo nivel para manipular
+  paquetes OOXML (unpack/rezip, relationships, content types, merge de
+  runs) — usarlos en vez de reinventar manipulación de zip/XML.
+- `motor/case_store.py` — persistencia simple de casos en JSON
+  (`case_store/<id>.json`), numeración de página siguiente por caso, next
+  tab letra, etc.
+- `static/index.html` + `static/app.js` — UI de una sola página, sin
+  framework ni build step.
+
+## Auditoría 2026-08-25: fixes de robustez + primera suite de tests
+
+Auditoría completa a pedido del usuario ("hazle una auditoría... corrige
+todo"). No se tocó layout de plantillas ni comportamiento de documentos; son
+correcciones de robustez, código muerto y una suite de tests. Lo corregido:
+
+- **`case_store.next_tab_letra` — incremento base-26 biyectivo.** Antes solo
+  llegaba a "AA" (Z→AA) y de ahí se quedaba pegado (AA→AA). Ahora incrementa
+  con acarreo: A..Z, AA, AB, ... AZ, BA, ... ZZ, AAA. Se replicó la misma
+  lógica en `static/app.js` (`nextTabLetra`, usada por
+  `nextLetterFromLastRow`) para que frontend y backend coincidan. Solo
+  afectaba casos con 27+ exhibits.
+- **`pdf_merge._ANIO_RE` — rango de años de la sugerencia.** Era
+  `19[9]\d|20[0-3]\d` (1990-2039), dejaba de sugerir el año de reportes de
+  país a partir de 2040. Ahora `19[89]\d|20\d\d` (1980-2099).
+- **`app.py` — errores de datos de la tabla de exhibits ahora dan 400, no
+  500.** `motor.exhibit_builder` lanza `ValueError` cuando falta país / año
+  de Country Reports u OSAC / fecha de Biometrics Compliance. `api_generar`
+  no lo atrapaba (solo `FillEngineError`/`ValidationError`) y caía al
+  `except Exception` genérico → 500 "Error inesperado" sin pista. Se agregó
+  `ValueError` a la tupla del 400, así el mensaje claro del builder llega al
+  usuario. (Cubre también la trampa latente del default
+  `_biometricos_por_defecto` con `fecha=None`: si alguna vez llega, ahora es
+  un 400 legible en vez de un 500.)
+- **`app.py` — `request.get_json(force=True)` sin body válido.** En
+  `api_save_caso` y `api_generar` un body vacío/no-JSON hacía `None.get(...)`
+  → 500 con traceback. Ahora `force=True, silent=True` + chequeo `isinstance
+  dict` → 400 "El cuerpo de la petición no es JSON válido".
+- **`app.py` — limpieza de evidencia huérfana al arrancar.** Los PDFs subidos
+  viven en `output/_evidencia` indexados SOLO en memoria (`_EVIDENCIAS`).
+  Tras reiniciar el servidor ese índice queda vacío, así que los archivos
+  viejos son inalcanzables y solo ocupaban disco (se acumulaban sin límite).
+  `_limpiar_evidencia_huerfana()` los borra en el bloque `if __name__ ==
+  "__main__"` (NO al importar — los tests importan `app` sin borrar nada).
+  **Nunca toca `output/` (los .docx/.pdf finales son entregables que el
+  usuario puede no haber descargado todavía).**
+- **Código muerto**: `by_id` sin usar en `fill_engine._apply_field_values`;
+  doble asignación de `ultima_pagina` en `pdf_merge.combinar_portada_y_evidencia`.
+- **Primera suite de tests: `tests/run_tests.py`.** Sin pytest (el entorno
+  del despacho solo tiene requirements.txt) — se corre con `python3
+  tests/run_tests.py`, sale con código ≠0 si algo falla. Cubre la clase de
+  bug que ya se repitió varias veces: invariante de conteo de párrafos
+  DESCRIPTION==PAGES en modo evidencia (fee+biometrics, biometrics-solo,
+  country_conditions parcial, form_of_identity, supplemental, multi-
+  categoría), subtítulo de Biometrics repetido por persona, fecha
+  obligatoria, `next_tab_letra` base-26, y el rango de `_ANIO_RE`. 10 tests,
+  todos en verde. **Correr esta suite antes de commitear cambios a
+  `exhibit_builder`/`case_store`/`pdf_merge` — es la red que faltaba.**
+
+### Puntos de la auditoría que NO se cambiaron (a propósito)
+
+- **Numeración de páginas no idempotente.** Regenerar un Tab vuelve a avanzar
+  `case["siguiente_pagina"]`. NO se cambió: es parte del diseño de
+  "paginación continua por caso", y alterar cómo persisten los números de
+  página es comportamiento que afecta el documento — el usuario controla
+  "página inicial del lote" a mano y el frontend re-lee `siguiente_pagina`
+  tras generar. Cambiarlo requeriría una decisión de producto explícita, no
+  es un bug.
+- **Alineación de Biometrics cuando un renglón envuelve a 2 líneas visuales.**
+  Ya documentado arriba como no verificable en este sandbox (LibreOffice
+  roto). No es corregible a ciegas por estructura XML.
+- **Estado global + Flask multihilo.** Condición de carrera solo teórica con
+  dos pestañas simultáneas; es una herramienta local monousuario. Un lock
+  agregaría complejidad para ~cero beneficio real. Se deja anotado.
+  **Actualización 2026-08-26**: con el despliegue en la nube (ver sección
+  de abajo) esto deja de ser 100% teórico — varios abogados/paralegales
+  del despacho pueden entrar a la vez desde la misma VM. Aun así, no se
+  tocó a propósito: `_EVIDENCIAS` en memoria es por-proceso pero cada
+  request de un usuario distinto solo pisa SUS PROPIOS PDFs subidos (los
+  ids son `uuid4`, no colisionan entre usuarios), y `case_store` escribe
+  un archivo por caso — dos personas editando el MISMO caso a la vez
+  todavía podría pisarse una corrida a la otra, pero es un escenario de
+  uso raro (un caso lo lleva una sola persona a la vez en la práctica del
+  despacho) y agregar locking sigue sin justificarse sin que el despacho
+  reporte un choque real.
+
+## Despliegue en la nube (2026-08-26)
+
+A pedido del usuario, el proyecto pasó de "solo corre en una laptop local"
+a poder correr en un servidor propio accesible desde internet, con login
+por usuario. Todo el código de infraestructura vive en el repo desde esta
+sesión; lo que NO se pudo hacer desde acá (crear cuentas, DNS, secrets) está
+documentado paso a paso en `DEPLOY.md` — ese archivo es la referencia para
+completar el despliegue real, no lo repito acá.
+
+### Decisión de hosting: Oracle Cloud "Always Free"
+
+Se evaluaron Render/Railway/Fly.io — hoy ninguno da una VM realmente
+gratis con disco persistente y sin apagarse por inactividad (piden tarjeta
+o borran el filesystem en cada redeploy). Oracle Cloud sí tiene un tier
+"Always Free" real: una VM ARM persistente, gratis para siempre. Es la
+única opción viable si el requisito es "gratis" en sentido estricto — el
+tradeoff es que el signup a veces reporta "sin capacidad" en la región
+elegida (hay que reintentar/cambiar de región, es un problema conocido de
+Oracle). Alternativa de respaldo si Oracle no funciona: un VPS barato
+(Hetzner/DigitalOcean, ~$4-6/mes) con el mismo `docker-compose.yml` — no
+requiere cambiar nada del código, solo el paso 1 de `DEPLOY.md`.
+
+### Login individual por usuario — `motor/auth.py`
+
+- Mismo patrón que `case_store.py`: JSON simple (`usuarios/usuarios.json`,
+  gitignored — son credenciales, no código, igual criterio que
+  `case_store/*.json`), sin base de datos ni dependencias nuevas
+  (`werkzeug.security` ya viene con Flask, no se agregó Flask-Login a
+  propósito — con `session` de Flask + un decorator/`before_request`
+  alcanza y hay menos que aprender/mantener).
+- `app.py`: `@app.before_request` (`_exigir_login`) protege TODAS las
+  rutas salvo `_RUTAS_PUBLICAS = {"login", "api_login", "static",
+  "healthz"}` — si se agrega una ruta nueva que deba ser pública (poco
+  común), hay que sumarla ahí explícitamente; el default es "requiere
+  login", no al revés. Una request a `/api/*` sin sesión devuelve 401 JSON
+  (el frontend, en `api()` de `app.js`, redirige solo a `/login` al ver un
+  401 — así una sesión expirada no deja a alguien mirando errores en
+  consola sin saber qué pasó); una request a una página HTML sin sesión
+  redirige 302 a `/login`.
+- **Bug encontrado y corregido durante la prueba manual de este mismo
+  cambio**: `_RUTAS_PUBLICAS` inicialmente solo tenía `"login"` (el nombre
+  de la función de la página HTML) pero NO `"api_login"` (el endpoint del
+  POST que valida credenciales) — el propio `before_request` bloqueaba el
+  login con 401 antes de que pudiera validar nada. Se detectó de
+  inmediato con una prueba end-to-end real (`curl` con cookies) antes de
+  entregar, no quedó en el código.
+- `scripts/manage_users.py`: CLI para crear/listar/borrar usuarios y
+  cambiar contraseñas, corrido en el servidor (`docker compose exec app
+  python3 scripts/manage_users.py create ...`). **A propósito no hay UI de
+  administración de usuarios** — no se pidió, y el manejo por CLI es
+  suficiente para un despacho chico. Si se pide una UI más adelante, que
+  llame a las funciones de `motor/auth.py`, no duplicar la lógica de
+  hasheo/verificación.
+- Auditoría mínima: `auth.registrar_auditoria(usuario, evento, detalle)`
+  agrega una línea a `case_store/_audit.log` (JSON lines, append-only,
+  gitignored — tiene IDs de casos reales) cada vez que `/api/generar`
+  produce un documento (para ambas ramas: plantillas PDF-form y las
+  demás). Nunca lanza excepción (un fallo de auditoría no debe bloquear
+  la generación real) — ver `_limpiar_evidencia_huerfana`-style de
+  robustez ya usado en el resto del proyecto.
+- `static/login.html`: página nueva, mismo estilo visual (clases
+  `.panel`/`.brand-mark` de `styles.css`) que el resto de `static/` — sin
+  build step, JS plano inline. `index.html`/`como-funciona.html` ganaron
+  un link "Cerrar sesión (nombre)" en el `topnav`, poblado desde
+  `/api/init` → `data.usuario`.
+- Verificado end-to-end con `curl` real (no solo unit tests): sin cookie
+  → 401/302; login con password mala → 401; login correcto → cookie +
+  200; con cookie → accede; logout → cookie inválida, vuelve a 401. Suite
+  `tests/run_tests.py` sigue en 15/15 (el login no la toca, son módulos
+  independientes).
+
+### Docker — `Dockerfile` / `requirements-server.txt` / `.dockerignore`
+
+- Imagen `python:3.11-slim` + `libreoffice` (headless, resuelve la
+  conversión .docx→PDF que en ESTE sandbox de desarrollo está rota — en
+  producción si funciona) + `fonts-liberation`/`fonts-liberation2`/
+  `fonts-crosextra-carlito` (sustitutos métricos de Times New
+  Roman/Arial/Calibri — sin fuentes correctas, LibreOffice re-wrappea el
+  texto con otra fuente y rompe el layout calibrado a mano, ver
+  `_estimar_lineas_visuales` más arriba en este archivo) + `gunicorn`
+  (servidor WSGI real, reemplaza `app.run()` que Flask mismo advierte que
+  es solo para desarrollo).
+- `requirements-server.txt` (aparte de `requirements.txt`): agrega
+  `gunicorn`, que no se necesita ni se usa en el flujo local de Windows
+  (`python app.py` vía `iniciar.bat`) — se separó para no ensuciar esa
+  instalación con un paquete que nunca corre ahí.
+- **`_limpiar_evidencia_huerfana()` se movió de adentro de `if __name__ ==
+  "__main__":` a nivel de módulo** (corre siempre que se importa
+  `app.py`, no solo con `python app.py` directo) — bug que se hubiera
+  colado silenciosamente: gunicorn importa `app:app`, nunca ejecuta el
+  bloque `__main__`, así que en producción esa limpieza jamás habría
+  corrido y `output/_evidencia` habría crecido sin límite en cada
+  redeploy. El `webbrowser.open(...)` (que no tiene sentido en un
+  servidor sin pantalla) se dejó adentro de `__main__`, sí correctamente
+  gateado.
+- `case_store/`, `output/`, `usuarios/`, `firmas/` NUNCA viven dentro de
+  la imagen — son volúmenes de Docker montados en tiempo de ejecución (ver
+  `docker-compose.yml`), para que sobrevivan a un `docker compose up
+  --build`. `.dockerignore` replica las mismas exclusiones de
+  `.gitignore` (datos de clientes, credenciales, firmas escaneadas) para
+  que ni siquiera entren al contexto de build.
+
+### `docker-compose.yml` + `Caddyfile` (HTTPS automático)
+
+- Dos servicios: `app` (la imagen de arriba) y `caddy` (reverse proxy,
+  pide y renueva el certificado Let's Encrypt solo — no hay que tocar
+  certbot/nginx a mano). `caddy` es el único que expone 80/443 al
+  exterior; `app` solo se expone internamente (`expose`, no `ports`).
+- `Caddyfile` usa `{$DOMAIN}` (variable de entorno) — sin un dominio real
+  apuntando a la VM, Caddy no puede pedir el certificado. `Caddyfile.sin-
+  dominio` es una variante HTTP-plano-por-IP solo para probar mientras el
+  DNS todavía no propaga (instrucciones en `DEPLOY.md`) — no dejar así en
+  uso real con datos de clientes.
+- `.env.example` documenta las dos variables que hacen falta
+  (`SECRET_KEY`, `DOMAIN`) — `.env` real está gitignored.
+
+### GitHub Actions — `.github/workflows/deploy.yml`
+
+- En cada push a `main`: SSH a la VM, `git fetch` + `git reset --hard
+  origin/main` + `docker compose up -d --build`. Sin registro de imágenes
+  (no hace falta con un solo servidor) — el build de Docker corre en la
+  propia VM. Requiere 3 secrets en GitHub (`DEPLOY_HOST`, `DEPLOY_USER`,
+  `DEPLOY_SSH_KEY`), ver `DEPLOY.md`.
+- **El `git reset --hard` en la VM es deliberado y hay que respetarlo**:
+  el clon de `~/legal` en el servidor es un DESTINO de despliegue, nunca
+  un lugar para editar código a mano — cualquier cambio local ahí se
+  pierde en el próximo push a `main`. Si alguna vez hace falta un hotfix
+  urgente directo en el servidor, hay que mergearlo a `main` después o el
+  siguiente deploy automático lo revierte sin avisar.
+
+### Backups — `scripts/backup.sh` (restic + Backblaze B2)
+
+- Con una sola VM sin base de datos administrada, un backup cifrado
+  aparte es la única red de seguridad real ante un disco corrupto o un
+  `docker volume rm` accidental. Se eligió `restic` (un solo binario,
+  cifra y deduplica solo, soporte nativo para B2) en vez de armar
+  tar+gpg+rclone a mano — menos piezas que puedan fallar.
+- Respalda directo los volúmenes de Docker desde disco
+  (`/var/lib/docker/volumes/legal_*_data/_data`) sin parar los
+  contenedores — son archivos JSON/PNG estáticos, sin riesgo de leer un
+  archivo a medio escribir en el momento exacto del backup (el patrón de
+  escritura del proyecto es siempre "escribir el JSON completo de una",
+  ver `case_store.save_case`, nunca updates parciales in-place).
+  Retención 14 diarios / 8 semanales / 6 mensuales.
+- Credenciales (`RESTIC_PASSWORD`, claves de B2) viven en
+  `/root/.restic-env` en la VM, fuera de git — `scripts/backup.sh` no las
+  hardcodea en ningún lado. **`RESTIC_PASSWORD` hay que guardarla aparte
+  en un lugar seguro** (gestor de contraseñas del despacho) — sin ella el
+  backup cifrado es irrecuperable, ni Backblaze puede abrirlo.
+- Pensado para cron diario (ver línea exacta en `DEPLOY.md`), no se
+  automatizó la creación del cron job desde acá — es un paso manual del
+  usuario en la VM real (`DEPLOY.md`, sección 10).
+
+### Qué falta para que esto quede realmente andando
+
+Todo el código está listo y probado localmente (auth end-to-end con curl,
+suite completa 15/15), pero **nada de esto se pudo probar en un servidor
+real desde este sandbox** — no hay forma de crear una cuenta de Oracle
+Cloud, apuntar un DNS, o correr Docker con LibreOffice real desde acá. Los
+puntos de `DEPLOY.md` (crear la VM, instalar Docker, dominio, `.env`,
+primer usuario, secrets de GitHub, backups) son 100% manuales y quedan
+pendientes de que el despacho los ejecute. Si algo de `DEPLOY.md` no
+coincide con la UI real de Oracle/GitHub/Backblaze al momento de seguirlo
+(cambian seguido), avisar con una captura para ajustar la guía en vez de
+improvisar un paso distinto.

@@ -1,0 +1,16 @@
+.git
+__pycache__
+*.pyc
+venv/
+
+# datos reales de clientes y credenciales — NUNCA en la imagen, viven en
+# volúmenes montados en tiempo de ejecución (ver docker-compose.yml)
+case_store/*.json
+case_store/_audit.log
+usuarios/*.json
+output/*
+!output/.gitkeep
+input/*
+!input/.gitkeep
+firmas/abogados/*.png
+firmas/preparadores/*.png

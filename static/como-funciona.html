@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cómo funciona — Sistema de llenado de Tabs EOIR</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="brand-mark">KC</div>
+      <div class="brand-text">
+        <h1>Sistema de llenado de Tabs — EOIR</h1>
+        <p>Kostiv Cardinal International Law Group Corp. · portadas de expediente (I-589)</p>
+      </div>
+    </div>
+    <nav class="topnav">
+      <a href="/">Inicio</a>
+      <a href="/como-funciona" class="active">Cómo funciona</a>
+      <a href="#" id="logout-link">Cerrar sesión</a>
+    </nav>
+  </div>
+</div>
+
+<main class="page">
+
+  <div class="hero">
+    <h1>Cómo funciona el sistema</h1>
+    <p>Guía rápida para llenar la portada de exhibits (Tab cover) de un I-589, subir la evidencia y obtener el PDF final listo para imprimir o archivar.</p>
+  </div>
+
+  <div class="steps">
+
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h3>Captura o selecciona el caso</h3>
+        <p>En <strong>Inicio</strong>, si el caso ya existe elígelo en "Caso existente" — se rellenan solos el nombre, A#, corte, juez, etc. Si es nuevo, captura los datos y da clic en <code>Guardar caso</code>.</p>
+        <ul>
+          <li>Si el expediente tiene más de un A# (cónyuge, hijos), agrégalos como <strong>riders</strong>. El sistema arma solo el "{nombre} et al" y el "A# líder/últimos 3 dígitos de cada rider" donde corresponda.</li>
+          <li>Guardar el caso también recuerda en qué página se quedó el expediente la última vez, para sugerir automáticamente la siguiente página al generar un nuevo Tab.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h3>Elige la plantilla y agrega los Tabs</h3>
+        <p>Selecciona la plantilla y el título del documento. Si la plantilla lleva tabla de exhibits, aparece la sección de <strong>Tabs</strong> — agrega uno por cada letra (A, B, C…) y marca las categorías de contenido que lleva.</p>
+        <ul>
+          <li>La letra del siguiente Tab y la página inicial se sugieren solas según el último Tab guardado del caso — puedes corregirlas si hace falta.</li>
+          <li>Cada categoría puede llevar uno o varios documentos, según el tipo de Tab (ver la sección de categorías más abajo).</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h3>Sube la evidencia en PDF</h3>
+        <p>Por cada documento del Tab (I-589, Country Report, pasaporte, noticia, recibo de Fee, etc.) sube su PDF. El sistema cuenta las páginas y calcula solo el rango donde queda cada uno, encadenado desde la página inicial del lote.</p>
+        <ul>
+          <li>Para Country Conditions / OSAC, el sistema intenta detectar el país y el año leyendo el PDF — siempre puedes corregir la sugerencia.</li>
+          <li>Para el recibo de Fee, detecta si es "Initial" o "Annual" buscando la frase exacta "Initial Application Fee" en el documento.</li>
+          <li>Para una noticia (News), sugiere el título leyendo la primera línea del PDF — revísalo, porque no siempre acierta el titular exacto.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h3>Genera el documento</h3>
+        <p>Da clic en <code>Generar documento</code>. El sistema llena la plantilla, arma la tabla de exhibits y las páginas divisorias "EXHIBIT {letra}", y — si hay evidencia adjunta — convierte todo a PDF y la inserta automáticamente justo después de cada divisoria (antes de "Proof of Service"), con número de página al pie de cada hoja.</p>
+        <ul>
+          <li>Si algún Tab tiene evidencia, el sistema genera un PDF por Tab de forma automática (no se pueden combinar varios Tabs con evidencia en un solo archivo).</li>
+          <li>La conversión a PDF usa Word en segundo plano, así el formato y las fuentes quedan idénticos al documento original.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h3>Descarga y revisa</h3>
+        <p>Los enlaces de descarga (.docx y .pdf) aparecen debajo del botón, y también quedan listados en <strong>Documentos generados</strong> con miniaturas de verificación visual. Cada archivo se guarda con un nombre único (cliente, A# y tipo de Tab) para que nunca se sobreescriba uno anterior.</p>
+      </div>
+    </div>
+
+  </div>
+
+  <section>
+    <h2 style="font-size:18px; margin-bottom:14px;">Categorías de contenido por Tab</h2>
+    <div class="category-grid">
+
+      <div class="category-card">
+        <div class="cat-letter">I-589</div>
+        <h4>I-589 Application</h4>
+        <p>La aplicación de asilo en sí. Un solo documento.</p>
+      </div>
+
+      <div class="category-card">
+        <div class="cat-letter">CC</div>
+        <h4>Country Conditions</h4>
+        <p>Country Report + OSAC Report del país de origen. País y años se detectan del PDF, editable.</p>
+      </div>
+
+      <div class="category-card">
+        <div class="cat-letter">ID</div>
+        <h4>Form of Identity</h4>
+        <p>Un documento de identidad (pasaporte, acta de nacimiento o ID) por cada persona del caso — el aplicante líder y cada rider, cada quien con su propio archivo y rango de páginas.</p>
+      </div>
+
+      <div class="category-card">
+        <div class="cat-letter">SE</div>
+        <h4>Supplemental Evidence</h4>
+        <p>Varios documentos de apoyo (Declaration, Psychological Report, noticias). En noticias, el título del artículo se inserta en el subtítulo de esa línea.</p>
+      </div>
+
+      <div class="category-card">
+        <div class="cat-letter">FEE</div>
+        <h4>Fee</h4>
+        <p>Recibo de pago (Initial o Annual, detectado automáticamente) y/o huellas del FBI — cada uno se muestra solo si se sube su archivo.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2 style="font-size:18px; margin-bottom:14px;">Preguntas frecuentes</h2>
+    <div class="faq">
+      <details>
+        <summary>¿Por qué no me deja combinar varios Tabs con evidencia en un solo archivo?</summary>
+        <p>Porque cada Tab con evidencia necesita insertar sus propias páginas justo después de su propia divisoria "EXHIBIT {letra}" — si se combinan, no habría forma de saber dónde termina un Tab y empieza el siguiente dentro del mismo PDF. Por eso, en cuanto un Tab lleva un archivo adjunto, el sistema genera automáticamente un PDF separado por Tab.</p>
+      </details>
+      <details>
+        <summary>¿Qué pasa si me equivoco en la página inicial del lote?</summary>
+        <p>Puedes corregirla a mano antes de generar — el sistema solo la sugiere con base en la última página guardada del caso, nunca la impone.</p>
+      </details>
+      <details>
+        <summary>¿Dónde se guardan los documentos generados?</summary>
+        <p>En la carpeta <code>output/</code> del programa, con un nombre único por corrida (cliente, A# y tipo de Tab) para que nunca se sobreescriba un archivo anterior. También aparecen listados en la sección "Documentos generados" de la pantalla de Inicio.</p>
+      </details>
+      <details>
+        <summary>El PDF generado no tiene las mismas fuentes que el Word original, ¿qué hago?</summary>
+        <p>Asegúrate de tener Microsoft Word instalado y cerrado (sin otro documento abierto) cuando generes el PDF — el sistema lo usa en segundo plano para convertir con fidelidad exacta. Si Word no está disponible, usa LibreOffice como respaldo, aunque puede variar ligeramente el formato de algunas fuentes.</p>
+      </details>
+      <details>
+        <summary>¿Puedo tener más de un A# en el mismo caso?</summary>
+        <p>Sí — agrega cada co-aplicante (cónyuge, hijos) como "rider" en el paso 1. El documento mostrará "{nombre del cliente} et al" y el A# como "{A# líder}/{últimos 3 dígitos de cada rider}" automáticamente, incluyendo los ajustes de "Respondent" → "Respondents" donde corresponde.</p>
+      </details>
+    </div>
+  </section>
+
+  <div class="callout">
+    <strong>¿Algo no se ve bien o falta un caso que no está contemplado aquí?</strong>
+    Avísale a Hugo con una captura de pantalla — este sistema se ajusta seguido según los expedientes reales del despacho.
+  </div>
+
+</main>
+
+<footer class="app-footer">
+  Kostiv Cardinal International Law Group Corp. · Sistema interno de llenado de Tabs — uso exclusivo del despacho
+</footer>
+
+<script>
+document.getElementById("logout-link").addEventListener("click", async (ev) => {
+  ev.preventDefault();
+  await fetch("/api/logout", { method: "POST" });
+  window.location.href = "/login";
+});
+</script>
+
+</body>
+</html>

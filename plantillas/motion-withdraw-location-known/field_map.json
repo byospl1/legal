@@ -1,0 +1,56 @@
+{
+  "template_id": "motion-withdraw-location-known",
+  "archivo": "MOTION_TO_WITHDRAW_LOCATION_KNOWN.docx",
+  "campos_simples": [],
+  "campos_anidados": [],
+  "grupos_bookmark": [],
+  "grupos_sync_manual": [
+    { "nombre": "abogado", "ids": ["910000001", "910000002"], "tipo": "texto", "opciones": [] },
+    { "nombre": "cliente_nombre", "ids": ["910000003", "910000004", "910000005", "910000006", "910000007", "910000008"], "tipo": "texto", "opciones": [] },
+    { "nombre": "corte_sede", "ids": ["910000009", "910000010", "910000011"], "tipo": "texto", "opciones": [] },
+    { "nombre": "a_number", "ids": ["910000012", "910000013", "910000014", "910000015"], "tipo": "texto", "opciones": [] },
+    { "nombre": "juez", "ids": ["910000016", "910000018"], "tipo": "texto", "opciones": [] },
+    { "nombre": "proxima_audiencia", "ids": ["910000017"], "tipo": "texto", "opciones": [] },
+    { "nombre": "abogado_firma_coma", "ids": ["910000019", "910000020"], "tipo": "texto", "opciones": [] },
+    { "nombre": "abogado_nombre_mayus", "ids": ["910000021"], "tipo": "texto", "opciones": [] },
+    { "nombre": "abogado_nombre", "ids": ["910000022", "910000023"], "tipo": "texto", "opciones": [] },
+    { "nombre": "direccion_conocida", "ids": ["910000024"], "tipo": "texto", "opciones": [] },
+    { "nombre": "preparador_mayus", "ids": ["910000026", "910000027"], "tipo": "texto", "opciones": [] }
+  ],
+  "firmas_imagen": [
+    { "nombre": "abogado", "categoria": "abogados", "ids": ["910000029", "910000030"] },
+    { "nombre": "preparador", "categoria": "preparadores", "ids": ["910000028"] }
+  ],
+  "campos_automaticos_no_tocar": [
+    { "tipo": "DATE", "descripcion": "Campo de Word autoactualizable (DATE \\@ \"MMMM d, yyyy\"), firma del cuerpo de la moción — no tocar" },
+    { "tipo": "DATE", "descripcion": "Campo de Word autoactualizable (DATE \\@ \"MMMM d, yyyy\"), firma de la Declaración (Exhibit A) — no tocar" },
+    { "tipo": "DATE", "descripcion": "Campo de Word autoactualizable (DATE \\@ \"M/d/yyyy\"), Certificate of Service — reemplazó un texto suelto \"10/15/2025\" que parecía residuo de otro caso, ahora se auto-actualiza como el resto de las fechas de firma" }
+  ],
+  "tiene_tabla_exhibits": false,
+  "evidencia_exhibits": [
+    { "letra": "B", "descripcion": "Comprobante de envío (USPS Certified Mail) a la dirección conocida del cliente", "anchor_texto": "“EXHIBIT B”" },
+    { "letra": "C", "descripcion": "Disengagement Letter", "anchor_texto": "“EXHIBIT C”" },
+    { "letra": "D", "descripcion": "Pro bono List", "anchor_texto": "“EXHIBIT D”" }
+  ],
+  "notice_exhibits": [
+    { "letra": "A", "removible": false, "marcador_texto": "(Exhibit A)" },
+    {
+      "letra": "B", "removible": true, "conector_run_separado": true, "conector_prefijo": "",
+      "marcador_solo_texto": "(Exhibit B)", "termina_oracion": false,
+      "contenido_texto": " Proof of mailing to Respondent’s known address ",
+      "marcador_texto": "(Exhibit B)"
+    },
+    {
+      "letra": "C", "removible": true, "conector_run_separado": false, "conector_prefijo": ", ",
+      "marcador_solo_texto": "(Exhibit C)", "termina_oracion": false,
+      "contenido_texto": ", the attached Disengagement Letter ",
+      "marcador_texto": "(Exhibit C)"
+    },
+    {
+      "letra": "D", "removible": true, "conector_run_separado": false, "conector_prefijo": " and ",
+      "marcador_solo_texto": "(Exhibit D).", "termina_oracion": true,
+      "contenido_texto": " and a Pro bono List ",
+      "marcador_texto": "(Exhibit D)."
+    }
+  ]
+}

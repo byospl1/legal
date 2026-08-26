@@ -1,0 +1,35 @@
+name: Deploy a producción
+
+# En cada push a main, se conecta por SSH a la VM y reconstruye el
+# contenedor con el código nuevo. No usa un registro de imágenes (no hace
+# falta con un solo servidor) — el build de Docker corre en la propia VM.
+#
+# Requiere 3 secrets configurados en GitHub (Settings → Secrets and
+# variables → Actions), ver DEPLOY.md para cómo generarlos:
+#   DEPLOY_HOST     IP o dominio de la VM
+#   DEPLOY_USER     usuario SSH (ej. ubuntu)
+#   DEPLOY_SSH_KEY  clave privada SSH (la pública debe estar en
+#                   ~/.ssh/authorized_keys de ese usuario en la VM)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Desplegar por SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/legal
+            git fetch origin main
+            git reset --hard origin/main
+            docker compose up -d --build
+            docker image prune -f

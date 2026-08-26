@@ -1,0 +1,75 @@
+{
+  "corte_sede": [
+    "SANTA ANA, CA",
+    "NORTH LOS ANGELES, CA",
+    "VAN NUYS, CA",
+    "WEST LOS ANGELES, CA",
+    "LOS ANGELES",
+    "SAN DIEGO, CA",
+    "NEW YORK, NY",
+    "WEST LOS ANGELES, CALIFORNIA",
+    "HYATTSVILLE, MARYLAND"
+  ],
+  "juez": [
+    "Siebert, Andrea.",
+    "Stancill, Christine E.",
+    "Everett, Timothy R.",
+    "Mcfadden, Anita.",
+    "Farrar-Crockett, Emily.",
+    "Miller, Nancy E.",
+    "Medved, Paul N.",
+    "Villegas, Veronica S.",
+    "Virchis, Bridget",
+    "Flagg, Darin",
+    "Anderson, Amelia ",
+    "Pepi, Lindsey ",
+    "Wright, Virna A.",
+    "Pierce, Curtis F.",
+    "Diaz, Irma"
+  ],
+  "abogado": [
+    "Carlos Caraballo, Esq. (SBN 21605)",
+    "John Negron, Esq. (SBN 21806)",
+    "Raul Mejia Santos, Esq. (SBN 22998)",
+    "Zahira Rodriguez Feliciano, Esq., LL.M. (SBN 20327)",
+    "Michael Quiroga, Esq. (SBN 333058)"
+  ],
+  "preparador": [
+    "Lorenzo Bracamontes",
+    "Kevin Calvillo",
+    "Bruno Briz"
+  ],
+  "titulo": {
+    "i589-tab-cover": [
+      "RESPONDENTS’ APPLICATION FOR ASYLUM, WITHHOLDING OF REMOVAL, AND RELIEF UNDER CAT (I-589).",
+      "INDEX OF SUPPORTING DOCUMENTATION FOR RESPONDENTS’ APPLICATION FOR ASYLUM, WITHHOLDING OF REMOVAL, AND RELIEF UNDER CAT (I-589).",
+      "FEE RECEIPT (FORM I-589)",
+      "RESPONDENT’S AMENDED APPLICATION FOR ASYLUM, WITHHOLDING OF REMOVAL AND RELIEF UNDER CAT (I-589)."
+    ],
+    "webex-motion": [
+      "MOTION FOR WEBEX APPEARANCE"
+    ]
+  },
+  "exhibit_categorias": {
+    "i589_application": {
+      "etiqueta": "Respondent's I-589 Application (ítem único, sin subtítulo)",
+      "requiere_variable": null
+    },
+    "country_conditions": {
+      "etiqueta": "Country Conditions and Reports (+ Country Reports on Human Rights Practice, OSAC)",
+      "requiere_variable": null
+    },
+    "form_of_identity": {
+      "etiqueta": "Form of Identity — Respondent's Passport from {PAIS}",
+      "requiere_variable": "pais"
+    },
+    "supplemental_evidence": {
+      "etiqueta": "Supplemental Evidence (declaración + traducción)",
+      "requiere_variable": null
+    },
+    "fee": {
+      "etiqueta": "FEE (fee receipt + FBI fingerprint + Biometrics Compliance)",
+      "requiere_variable": null
+    }
+  }
+}

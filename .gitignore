@@ -1,0 +1,24 @@
+venv/
+__pycache__/
+*.pyc
+
+# datos de clientes: no se suben al repositorio
+case_store/*.json
+case_store/_audit.log
+
+# credenciales de login: nunca se suben al repositorio
+usuarios/*.json
+input/*
+output/*
+!input/.gitkeep
+!output/.gitkeep
+
+# firmas escaneadas (PNG) de abogados/preparadores: se agregan localmente
+# en cada despacho, no viajan con el código
+firmas/abogados/*.png
+firmas/preparadores/*.png
+
+.DS_Store
+
+# secretos de despliegue (SECRET_KEY, dominio) — nunca en git
+.env

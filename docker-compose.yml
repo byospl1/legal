@@ -1,0 +1,42 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      # Firma la cookie de sesión del login — sin esto (o si cambia en cada
+      # redeploy) todos los usuarios logueados perderían la sesión al
+      # actualizar. Se fija en .env (ver .env.example), NUNCA hardcodeado acá.
+      - SECRET_KEY=${SECRET_KEY}
+    volumes:
+      # Datos reales del despacho — persisten aunque se reconstruya la
+      # imagen (`docker compose up --build`). Nunca viven dentro de la
+      # imagen ni del repo (ver .gitignore/.dockerignore).
+      - case_store_data:/app/case_store
+      - output_data:/app/output
+      - usuarios_data:/app/usuarios
+      - firmas_data:/app/firmas
+    expose:
+      - "5000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  case_store_data:
+  output_data:
+  usuarios_data:
+  firmas_data:
+  caddy_data:
+  caddy_config:

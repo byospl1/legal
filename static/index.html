@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sistema de llenado de Tabs — EOIR</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="brand-mark">KC</div>
+      <div class="brand-text">
+        <h1>Sistema de llenado de Tabs — EOIR</h1>
+        <p>Kostiv Cardinal International Law Group Corp. · portadas de expediente (I-589)</p>
+      </div>
+    </div>
+    <nav class="topnav">
+      <a href="/" class="active">Inicio</a>
+      <a href="/como-funciona">Cómo funciona</a>
+      <a href="#" id="logout-link">Cerrar sesión</a>
+    </nav>
+  </div>
+</div>
+
+<main>
+
+  <section class="panel">
+    <h2><span class="badge">1</span> Caso</h2>
+    <p class="subtitle">Selecciona un caso existente o captura uno nuevo. Estos datos se reutilizan en todos los Tabs del cliente.</p>
+
+    <div class="row" style="margin-bottom:14px; align-items:flex-end;">
+      <div class="field" style="min-width:260px;">
+        <label>Caso existente</label>
+        <select id="selCaso">
+          <option value="">— Nuevo caso —</option>
+        </select>
+      </div>
+      <button id="btnNuevoCaso" type="button">Nuevo caso</button>
+    </div>
+
+    <div class="grid">
+      <div class="field">
+        <label>Nombre del cliente</label>
+        <input type="text" id="cliente_nombre" placeholder="APELLIDO, Nombre">
+      </div>
+      <div class="field">
+        <label>A#</label>
+        <input type="text" id="a_number" placeholder="A 000-000-000">
+      </div>
+      <div class="field">
+        <label>Corte / sede</label>
+        <input type="text" id="corte_sede" list="dlCorteSede" placeholder="ej. SANTA ANA, CA">
+        <datalist id="dlCorteSede"></datalist>
+      </div>
+      <div class="field">
+        <label>Juez</label>
+        <input type="text" id="juez" list="dlJuez" placeholder="Apellido, Nombre">
+        <datalist id="dlJuez"></datalist>
+      </div>
+      <div class="field full">
+        <label>Próxima audiencia (fecha, hora, tipo y modalidad — tal como aparece en el portal EOIR)</label>
+        <input type="text" id="proxima_audiencia" placeholder="ej. 08/26/2026 08:30 AM, Master Calendar Hearing, In Person (o ya escrito: September 10, 2026, 9:00 AM, ...)">
+      </div>
+      <div class="field">
+        <label>Abogado</label>
+        <select id="abogado"></select>
+      </div>
+      <div class="field">
+        <label>Preparador</label>
+        <input type="text" id="preparador" list="dlPreparador">
+        <datalist id="dlPreparador"></datalist>
+      </div>
+    </div>
+
+    <div style="margin-top:18px;">
+      <div class="row" style="justify-content:space-between;">
+        <strong style="font-size:14px;">Co-aplicantes / riders (opcional)</strong>
+        <button type="button" id="btnAgregarRider">+ Agregar rider</button>
+      </div>
+      <p class="subtitle" style="margin-top:4px;">Si el expediente tiene más de un A# (cónyuge, hijos), agrégalos aquí. En los documentos, el nombre queda como "{nombre del cliente} et al" y el A# como "{A# del cliente}/últimos 3 dígitos de cada rider".</p>
+      <div id="ridersList" style="margin-top:8px;"></div>
+    </div>
+
+    <div class="row" style="margin-top:18px;">
+      <button class="primary" id="btnGuardarCaso" type="button">Guardar caso</button>
+      <span id="casoStatus" class="muted"></span>
+    </div>
+  </section>
+
+  <section class="panel" id="panelDocumento" style="display:none;">
+    <h2><span class="badge">2</span> Generar documento</h2>
+    <p class="subtitle">Elige la plantilla, el título del documento y — si aplica — los Tabs de exhibits a incluir en esta corrida.</p>
+
+    <div class="grid">
+      <div class="field">
+        <label>Plantilla</label>
+        <select id="plantilla"></select>
+      </div>
+      <div class="field" id="varianteField" style="display:none;">
+        <label>Variante</label>
+        <select id="plantillaVariante"></select>
+      </div>
+      <div class="field" id="tituloGlobalField">
+        <label>Título del documento</label>
+        <select id="titulo"></select>
+      </div>
+    </div>
+
+    <div id="camposExtraSection" class="grid" style="margin-top:16px; display:none;"></div>
+
+    <div id="motionExhibitsSection" style="margin-top:20px; display:none;">
+      <strong style="font-size:14px;">Evidencia de los Exhibits</strong>
+      <p class="subtitle" style="margin-top:4px;">Sube el PDF de cada Exhibit (opcional, puedes subir varios archivos por Exhibit) — se insertan después de la página "EXHIBIT {letra}" y se numeran solos.</p>
+      <div class="field" style="max-width:280px; margin-bottom:10px;">
+        <label>¿En qué página empieza la evidencia de esta moción?</label>
+        <input type="number" id="motionExhibitsPaginaInicial" min="1" value="1">
+      </div>
+      <div id="motionExhibitsList"></div>
+    </div>
+
+    <div id="exhibitsSection" style="margin-top:20px;">
+      <div class="row" style="justify-content:space-between;">
+        <strong style="font-size:14px;">Tabs de exhibits</strong>
+        <button type="button" id="btnAgregarTab">+ Agregar Tab</button>
+      </div>
+      <p class="subtitle" style="margin-top:6px;">Si subes el/los PDF de evidencia de un Tab, las páginas se numeran solas y se insertan justo después de la página "EXHIBIT {letra}" del PDF final (antes de "Proof of Service") — no hace falta escribir el rango de páginas a mano. Cada Tab tiene su propio "Título del documento": si generas varios Tabs a la vez y no todos son de la misma categoría, cada uno sale con el título que le corresponde.</p>
+      <div class="field" style="max-width:280px; margin-bottom:10px;">
+        <label>¿En qué página empieza este lote? (se sugiere dónde se quedó el caso — corrígelo si hace falta)</label>
+        <input type="number" id="paginaInicialLote" min="1" value="1">
+      </div>
+      <div id="tabsList" style="margin-top:12px;"></div>
+      <label class="categoria-opt" style="margin-top:6px;">
+        <input type="checkbox" id="separarPorTab" checked>
+        <span>Generar cada Tab como un archivo separado (recomendado si vas a imprimir/archivar cada Tab por su cuenta). Si lo desmarcas, se genera un solo documento con todos los Tabs juntos.</span>
+      </label>
+    </div>
+
+    <label class="categoria-opt" style="margin-top:10px;">
+      <input type="checkbox" id="generarPdf">
+      <span>Generar también el PDF de verificación (usa Word para convertir, así las fuentes quedan idénticas al original — recomendado antes de imprimir o archivar).</span>
+    </label>
+
+    <div class="row" style="margin-top:20px;">
+      <button class="primary" id="btnGenerar" type="button">Generar documento</button>
+      <span id="generarSpinner" style="display:none;"><span class="spinner"></span>Generando y verificando…</span>
+    </div>
+
+    <div id="resultado"></div>
+  </section>
+
+  <section class="panel">
+    <h2><span class="badge">3</span> Documentos generados</h2>
+    <p class="subtitle">Historial de corridas — la carpeta <code>output/</code>.</p>
+    <table class="salidas" id="tablaSalidas">
+      <thead><tr><th>Documento</th><th>PDF</th><th>Verificación visual</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="muted" id="sinSalidas" style="display:none;">Todavía no se ha generado ningún documento.</p>
+  </section>
+
+</main>
+
+<footer class="app-footer">
+  Kostiv Cardinal International Law Group Corp. · Sistema interno de llenado de Tabs — uso exclusivo del despacho
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

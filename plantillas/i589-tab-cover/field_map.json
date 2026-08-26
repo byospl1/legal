@@ -1,0 +1,140 @@
+{
+  "template_id": "i589-tab-cover",
+  "archivo": "00_TABS_TEAM_4.dotx",
+  "campos_simples": [
+    {
+      "w_id": "118500407",
+      "nombre": "abogado",
+      "tipo": "dropdown",
+      "nivel": "parrafo",
+      "opciones": [
+        "John Negron, Esq. (SBN 21806)",
+        "Raul Mejia Santos, Esq. (SBN 22998)",
+        "Zahira Rodriguez Feliciano, Esq., LL.M. (SBN 20327)",
+        "Michael Quiroga, Esq. (SBN 333058)",
+        "Carlos Caraballo, Esq. (SBN 21605)"
+      ],
+      "placeholder_actual": "Carlos Caraballo, Esq. (SBN 21605)"
+    },
+    {
+      "w_id": "1033303953",
+      "nombre": "corte_sede",
+      "tipo": "combobox",
+      "nivel": "parrafo",
+      "opciones": [
+        "SANTA ANA, CA",
+        "NORTH LOS ANGELES, CA",
+        "VAN NUYS, CA",
+        "WEST LOS ANGELES, CA",
+        "LOS ANGELES",
+        "SAN DIEGO, CA"
+      ],
+      "placeholder_actual": "NORTH LOS ANGELES, CA"
+    },
+    {
+      "w_id": "1197268192",
+      "nombre": "proxima_audiencia",
+      "tipo": "texto",
+      "nivel": "inline",
+      "opciones": [],
+      "placeholder_actual": "Click or tap here to enter text."
+    }
+  ],
+  "campos_anidados": [
+    {
+      "w_id_exterior": "1939246995",
+      "w_id_interior": "-389965079",
+      "nombre": "juez",
+      "tipo": "combobox",
+      "opciones": [
+        "Siebert, Andrea.",
+        "Stancill, Christine E.",
+        "Everett, Timothy R.",
+        "Mcfadden, Anita.",
+        "Farrar-Crockett, Emily.",
+        "Miller, Nancy E.",
+        "Medved, Paul N.",
+        "Villegas, Veronica S.",
+        "Virchis, Bridget",
+        "Flagg, Darin",
+        "Anderson, Amelia ",
+        "Pepi, Lindsey "
+      ]
+    }
+  ],
+  "grupos_bookmark": [
+    {
+      "bookmark": "NAME",
+      "nombre": "cliente_nombre",
+      "maestro": "-2025233444",
+      "mirrors": [
+        "2107003224",
+        "-318661931"
+      ]
+    },
+    {
+      "bookmark": "ANUMBER",
+      "nombre": "a_number",
+      "maestro": "-1469576483",
+      "mirrors": [
+        "-495658119"
+      ]
+    },
+    {
+      "bookmark": "TYPE",
+      "nombre": "titulo",
+      "maestro": "-1541357994",
+      "mirrors": [
+        "-1550829470"
+      ]
+    }
+  ],
+  "grupos_sync_manual": [
+    {
+      "nombre": "preparador",
+      "ids": [
+        "-171570321",
+        "-83772077"
+      ],
+      "tipo": "combobox",
+      "opciones": [
+        "Kevin Calvillo",
+        "Lorenzo Bracamontes"
+      ]
+    }
+  ],
+  "firmas_imagen": [
+    {
+      "nombre": "preparador",
+      "categoria": "preparadores",
+      "ids": [
+        "930000001"
+      ]
+    }
+  ],
+  "campos_automaticos_no_tocar": [
+    {
+      "tipo": "SEQ",
+      "descripcion": "Campo de Word autoactualizable (SEQ CHAPTER \\h \\r 1), no tocar"
+    },
+    {
+      "tipo": "SEQ",
+      "descripcion": "Campo de Word autoactualizable (SEQ CHAPTER \\h \\r 1), no tocar"
+    },
+    {
+      "tipo": "DATE",
+      "descripcion": "Campo de Word autoactualizable (DATE \\@ &quot;MMMM d, yyyy&quot; ), no tocar"
+    }
+  ],
+  "tiene_tabla_exhibits": true,
+  "plural_riders": [
+    {
+      "buscar": ">Respondent<",
+      "reemplazar": ">Respondents<"
+    },
+    {
+      "buscar": "A True Copy of the Respondent’s ",
+      "reemplazar": "A True Copy of the Respondents’ "
+    }
+  ]
+}
