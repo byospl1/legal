@@ -199,6 +199,29 @@ def test_declaraciones_modo_manual():
     _assert("Rider’s Rider Uno Declaration" in desc, "modo manual: falta la declaración de Rider Uno")
 
 
+def test_declaraciones_multi_tipo_por_persona():
+    # una persona puede subir más de un documento, cada uno con su propio
+    # tipo (Declaration / Psychological Report / News) -> mismo patrón que
+    # Form of Identity (identidades), ahora aplicado a Supplemental Evidence.
+    tg = {
+        "categorias": ["supplemental_evidence"],
+        "declaraciones": [
+            {"persona_nombre": None, "tipo": "Declaration", "evidencia": _ev(1, 1)},
+            {"persona_nombre": "Rider Uno", "tipo": "Psychological Report", "evidencia": _ev(2, 1)},
+            {"persona_nombre": "Rider Uno", "tipo": "News", "titulo": "amenazas", "evidencia": _ev(3, 1)},
+        ],
+        "documentos_se": [],
+    }
+    d, p = _desc_pages(tg)
+    _assert(d == p, f"declaraciones multi-tipo: DESCRIPTION={d} != PAGES={p}")
+    _assert(d == 3, f"se esperaban 3 documentos, se obtuvieron {d}")
+    desc = eb.build_description_cell_content(
+        tg["categorias"], None, documentos_se=[], declaraciones=tg["declaraciones"]
+    )
+    _assert("Rider’s Rider Uno Psychological Report." in desc, "falta el Psychological Report de Rider Uno")
+    _assert("Rider’s Rider Uno News about amenazas." in desc, "falta la News de Rider Uno")
+
+
 def test_alineacion_multi_categoria():
     tg = {
         "categorias": ["country_conditions", "form_of_identity", "fee"],

@@ -963,6 +963,79 @@ el párrafo narrativo, la descripción del Exhibit B, y se quitó el campo
   sandbox) — si algo no se ve bien al usarlo en la máquina del despacho,
   avisar con el detalle exacto.
 
+### Ajuste (mismo día): cada documento de Supplemental Evidence lleva su propio tipo, no solo "Declaration"
+
+- **Reporte del usuario tras probar la entrega anterior**: (1) "me dio el
+  documento sin los adjuntos" — reportó el PDF de un Tab con
+  Supplemental Evidence sin las páginas de evidencia fusionadas; (2)
+  pidió explícitamente poder elegir "qué tipo de documento estoy
+  cargando (si es declaracion o evidencia, etc)" por persona.
+- **Sobre lo de "sin los adjuntos"**: se auditó a fondo todo el pipeline
+  de fusión (`app.py._resolver_paginas_evidencia`, el gate
+  `tiene_evidencia`, `docs_con_pagina`, `combinar_portada_y_evidencia`) y
+  se reprodujo con un caso de prueba real vía Flask test client — la
+  lógica de `declaraciones` resultó ser IDÉNTICA en estructura a la de
+  `biometricos` (que ya funciona en producción), y con evidencia real
+  subida, el gate `tiene_evidencia` sí se dispara y sí intenta fusionar.
+  **No se pudo confirmar ni descartar el bug de forma concluyente en
+  este sandbox**: LibreOffice está roto acá (ver "Limitaciones
+  conocidas") y falla exactamente igual con `biometricos` (control de
+  prueba) que con `declaraciones` — sin conversión a PDF real,
+  `result.pdf_path` es `None` y la fusión nunca se intenta, así que este
+  sandbox no puede confirmar si el problema real estaba en la fusión o
+  en otra cosa. Se le pidió al usuario precisar (PDF vs docx, qué Tab) —
+  confirmó que era el PDF, en el Tab de declaraciones. Si el problema
+  persiste con esta entrega, pedir el mensaje exacto de `evidencia_error`
+  que muestra la UI al generar (ya existe, viene en la respuesta de
+  `/api/generar`) — eso apunta directo a la causa en vez de adivinar.
+- **Sobre elegir el tipo por persona**: el diseño de la sesión anterior
+  (un solo documento "Declaration" fijo por persona, sin opción de tipo)
+  se reemplazó por el mismo patrón que ya usa Form of Identity
+  (`identidades`): cada persona del caso (líder + cada rider) puede
+  agregar MÁS DE UN documento, cada uno con su propio selector de tipo
+  (`TIPOS_DOCUMENTO_PERSONA_SE = ["Declaration", "Psychological Report",
+  "News"]`, con campo de título si es "News") + archivo — botón "+
+  Agregar documento" por persona, "Quitar documento" si tiene más de
+  uno (mínimo 1 fila siempre). El texto sigue nombrando a la persona sin
+  importar el tipo elegido: "Respondent's/Rider's {NOMBRE} Declaration
+  for..." / "...Psychological Report." / "...News about {título}." —
+  `motor/exhibit_builder._declaration_line_text(persona_nombre, tipo,
+  titulo)`, reemplaza a la versión anterior que solo sabía de
+  Declaration.
+  - `TIPOS_SUPPLEMENTAL_EVIDENCE` volvió a incluir `"Declaration"` (había
+    quedado en `["Psychological Report", "News"]` en el primer intento) —
+    la lista libre (`documentos_se`, SIN persona asociada) sigue
+    existiendo para documentos que no pertenecen a nadie en particular
+    (ej. una noticia general del país). Nueva constante
+    `TIPOS_DOCUMENTO_PERSONA_SE` (mismos 3 valores) para el selector por
+    persona — separada de `TIPOS_SUPPLEMENTAL_EVIDENCE` por si en el
+    futuro alguna de las dos listas necesita divergir, aunque hoy tienen
+    el mismo contenido. Ambas se sirven vía `/api/init` →
+    `static/app.js` (`TIPOS_DOCUMENTO_PERSONA_SE`).
+  - `card._declaracionesEvidencia` pasó de `{personaKey: {evidencia_id,
+    num_paginas}}` a `{personaKey: [{id, tipo, titulo, evidencia_id,
+    num_paginas}, ...]}` — mismo patrón que `_identidadesEvidencia`
+    (Form of Identity). Nuevos helpers `_nuevoDocDeclaracion(card)` /
+    `_buscarDocDeclaracion(card, docId)`, clones directos de
+    `_nuevoDocIdentidad`/`_buscarDocIdentidad`. `recalcularPaginas()` y
+    `collectExhibits()` actualizados para recorrer la lista de
+    documentos de cada persona (antes esperaban un único objeto).
+  - `app.py` no necesitó cambios en `_resolver_paginas_evidencia` (ya
+    resolvía cualquier entrada de `declaraciones` con `evidencia_id`,
+    sin importar qué otras claves traiga el dict) — solo se agregó
+    `TIPOS_DOCUMENTO_PERSONA_SE` al import de `motor.exhibit_builder` y
+    a la respuesta de `/api/init`.
+  - Nuevo test `test_declaraciones_multi_tipo_por_persona` (una persona
+    con Psychological Report Y News a la vez) — suite completa en 14/14.
+- Verificado con `motor.fill_engine.generar_documento` real (caso con
+  riders, líder con Declaration, Rider Uno con Psychological Report):
+  ambos textos correctos, `Pgs. 1`/`Pgs. 2` alineados. `node --check
+  static/app.js` sin errores. **Sigue sin poder probarse la fusión real
+  de PDFs en este sandbox** (LibreOffice roto) — si el PDF sigue sin
+  traer los adjuntos con esta entrega, es la señal de que el bug es más
+  profundo de lo que esta auditoría pudo alcanzar por código; pedir el
+  `evidencia_error` exacto del response de `/api/generar` para ese caso.
+
 ## Form of Identity: ahora permite más de un documento por persona (2026-08-26)
 
 - **Pedido del usuario**: en el Tab de Form of Identity, permitir que una

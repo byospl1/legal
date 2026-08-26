@@ -56,11 +56,19 @@ CATEGORY_FRAGMENTS: dict[str, list[str]] = {
 SUBTITULOS_ATADOS_A_ITEM: dict[str, dict[int, int]] = {}
 
 # Textos fijos por tipo de documento de Supplemental Evidence. "News" lleva
-# título variable (el de la noticia); los demás son fijos. "Declaration" ya
-# NO vive aquí (2026-08-26) — pasó a ser una sección dinámica por persona
-# del caso (líder + cada rider), igual que Biometrics Compliance, ver
-# `declaraciones` en _build_supplemental_evidence_description/_pages.
-TIPOS_SUPPLEMENTAL_EVIDENCE = ["Psychological Report", "News"]
+# título variable (el de la noticia); los demás son fijos. Lista libre (sin
+# persona asociada) — para documentos por persona (líder/rider), ver
+# TIPOS_DOCUMENTO_PERSONA_SE y `declaraciones` más abajo.
+TIPOS_SUPPLEMENTAL_EVIDENCE = ["Declaration", "Psychological Report", "News"]
+
+# Mismos 3 tipos, pero para el selector POR PERSONA (2026-08-26, a pedido
+# explícito del usuario: "dejame elegir qué tipo de documento estoy
+# cargando, si es declaracion o evidencia") — cada persona del caso
+# (líder/rider) puede subir más de un documento, cada uno con su propio
+# tipo, igual patrón que Form of Identity (`identidades`/`tipo_doc`). El
+# texto generado nombra a la persona ("Rider's {NOMBRE} ...") igual que ya
+# hacía Declaration antes de este cambio — ver `_declaration_line_text`.
+TIPOS_DOCUMENTO_PERSONA_SE = ["Declaration", "Psychological Report", "News"]
 
 _TEXTO_DECLARATION = (
     "Respondent’s Declaration for Support of Asylum Withholding of Removal and Relief Under CAT."
@@ -304,17 +312,22 @@ def _supplemental_evidence_line_text(tipo: str | None, titulo: str | None) -> st
     return _TEXTO_DECLARATION
 
 
-def _declaration_line_text(persona_nombre: str | None) -> str:
-    if persona_nombre:
-        return (
-            f"Rider’s {persona_nombre} Declaration for Support of Asylum Withholding "
-            "of Removal and Relief Under CAT."
-        )
-    return _TEXTO_DECLARATION
+def _declaration_line_text(persona_nombre: str | None, tipo: str | None, titulo: str | None) -> str:
+    """Texto por persona para un documento de Supplemental Evidence — a
+    diferencia de `_supplemental_evidence_line_text` (lista libre, sin
+    persona), este SIEMPRE nombra a quién pertenece ("Respondent's" o
+    "Rider's {NOMBRE}"), sin importar el tipo elegido."""
+    quien = f"Rider’s {persona_nombre} " if persona_nombre else "Respondent’s "
+    if tipo == "News":
+        titulo = titulo or "…"
+        return f"{quien}News about {titulo}."
+    if tipo == "Psychological Report":
+        return f"{quien}Psychological Report."
+    return f"{quien}Declaration for Support of Asylum Withholding of Removal and Relief Under CAT."
 
 
 def _declaraciones_por_defecto() -> list[dict]:
-    return [{"persona_nombre": None, "evidencia": None}]
+    return [{"persona_nombre": None, "tipo": "Declaration", "titulo": None, "evidencia": None}]
 
 
 def _supplemental_evidence_en_modo_evidencia(documentos: list[dict], declaraciones: list[dict]) -> bool:
@@ -342,7 +355,7 @@ def _build_supplemental_evidence_description(
     for decl in declaraciones:
         if modo_evidencia and not (decl.get("evidencia") or decl.get("evidencia_id")):
             continue
-        texto = _declaration_line_text(decl.get("persona_nombre"))
+        texto = _declaration_line_text(decl.get("persona_nombre"), decl.get("tipo"), decl.get("titulo"))
         # Las declaraciones ya distinguen por persona ("Respondent's" vs
         # "Rider's {NOMBRE}") igual que Form of Identity/Biometrics — no se
         # pluralizan aunque el Tab sea plural, mismo criterio que esas dos.

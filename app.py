@@ -22,6 +22,7 @@ from motor.exhibit_builder import (
     CATEGORY_ORDER,
     ITEMS_POR_CATEGORIA,
     TIPOS_DOCUMENTO_IDENTIDAD,
+    TIPOS_DOCUMENTO_PERSONA_SE,
     TIPOS_SUPPLEMENTAL_EVIDENCE,
 )
 from motor.fill_engine import FillEngineError, generar_lote
@@ -151,6 +152,7 @@ def api_init():
             "items_por_categoria": ITEMS_POR_CATEGORIA,
             "tipos_documento_identidad": TIPOS_DOCUMENTO_IDENTIDAD,
             "tipos_supplemental_evidence": TIPOS_SUPPLEMENTAL_EVIDENCE,
+            "tipos_documento_persona_se": TIPOS_DOCUMENTO_PERSONA_SE,
         }
     )
 
