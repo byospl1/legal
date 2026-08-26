@@ -1622,6 +1622,33 @@ con resultados opuestos, y la diferencia importa:
   cambios vía `git archive --format=zip HEAD` + `SendUserFile`, además del
   commit local normal.
 
+## Traspaso a otro asistente con Word (2026-08-26) — `HANDOFF_CHATGPT.md`
+
+- A pedido del usuario se generó `HANDOFF_CHATGPT.md` (en la raíz del repo)
+  para transferir el proyecto a ChatGPT, que **sí tiene Word** y puede
+  hacer la verificación visual que este sandbox nunca pudo (LibreOffice
+  roto, ver arriba). Es un resumen curado de este mismo `CLAUDE.md` +
+  instrucciones de qué verificar visualmente. `CLAUDE.md` sigue siendo la
+  referencia exhaustiva; el handoff es el mapa de entrada.
+- **La razón del traspaso es exactamente la limitación de LibreOffice**: hay
+  varias cosas marcadas "no verificado visualmente" a lo largo de este
+  archivo que un entorno con Word puede cerrar. Las principales candidatas a
+  verificación visual (documentadas en detalle en sus propias secciones):
+  1. **Alineación PAGES ↔ DESCRIPTION** en la tabla de exhibits, para textos
+     que envuelven a 2+ líneas — el fix de `_estimar_lineas_visuales`
+     (Supplemental Evidence) está calibrado contra una captura pero nunca se
+     renderizó en Word real; y Biometrics Compliance sigue con el enfoque
+     viejo sin compensación de wrap (mismo patrón de bug latente, no tocado
+     porque nadie reportó que esté mal).
+  2. **Saltos de página** en `written-pleadings` (y el intento revertido en
+     `webex-motion`).
+  3. **Firmas dinámicas** `wp:inline` — que salgan una sola vez, sin flotar.
+- Si el proyecto vuelve a este entorno después de que ChatGPT lo haya
+  tocado, **releer `HANDOFF_CHATGPT.md` y este `CLAUDE.md`** y confirmar qué
+  se verificó/cambió del otro lado antes de seguir — pueden haber quedado
+  ajustes de layout hechos con Word a la vista que acá no se pueden validar.
+  Mantener ambos archivos sincronizados si se hacen cambios grandes.
+
 ## Arquitectura rápida (para no releer todo cada vez)
 
 - `app.py` — servidor Flask, endpoints de caso/generación/output.
