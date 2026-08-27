@@ -20,8 +20,14 @@ REM    administrados con gestionar-usuarios.bat).
 set "FIREBASE_API_KEY="
 if exist firebase-api-key.txt set /p FIREBASE_API_KEY=<firebase-api-key.txt
 
+REM Opcional: si ademas existe firebase-project-id.txt, se activa el candado
+REM por dispositivo (1 cuenta = 1 computadora) validado en Firestore.
+set "FIREBASE_PROJECT_ID="
+if exist firebase-project-id.txt set /p FIREBASE_PROJECT_ID=<firebase-project-id.txt
+
 if not "%FIREBASE_API_KEY%"=="" (
     echo Login: se validara por internet contra Firebase.
+    if not "%FIREBASE_PROJECT_ID%"=="" echo Candado activo: 1 cuenta = 1 computadora.
     goto arrancar
 )
 

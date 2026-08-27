@@ -12,6 +12,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import traceback
 import uuid
 from pathlib import Path
@@ -76,6 +77,29 @@ app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 # rutas quedan accesibles sin sesión, igual que antes de agregar el login.
 LOGIN_HABILITADO = os.environ.get("EOIR_LOGIN", "").strip() == "1"
 
+# ID estable de ESTA computadora, para el candado por dispositivo de Firebase
+# (1 cuenta = 1 máquina). Se guarda en el perfil del usuario del sistema
+# operativo (no en la carpeta del proyecto) para que sobreviva a una
+# reinstalación/actualización del programa — si se regenerara en cada update,
+# la máquina se vería como "nueva" y la cuenta quedaría trabada.
+DEVICE_ID_FILE = Path.home() / ".eoir-device-id"
+
+
+def _get_or_create_device_id() -> str:
+    try:
+        if DEVICE_ID_FILE.exists():
+            valor = DEVICE_ID_FILE.read_text(encoding="utf-8").strip()
+            if valor:
+                return valor
+        valor = uuid.uuid4().hex
+        DEVICE_ID_FILE.write_text(valor, encoding="utf-8")
+        return valor
+    except OSError:
+        # Si no se puede persistir el archivo, usar el nombre de host como
+        # identificador estable (mejor eso que un id nuevo en cada arranque,
+        # que trabaría la cuenta).
+        return "host-" + socket.gethostname()
+
 # Rutas accesibles SIN login — la propia pantalla de login (+ sus endpoints de
 # API), assets estáticos, y el health check que usa el reverse proxy/orquestador.
 _RUTAS_PUBLICAS = {"login", "api_login", "api_login_info", "static", "healthz"}
@@ -123,7 +147,7 @@ def api_login():
     password = str(body.get("password", ""))
     if auth.firebase_habilitado():
         try:
-            info = auth.verify_login_firebase(usuario, password)
+            signin = auth.firebase_signin(usuario, password)
         except auth.AuthRedError:
             # No se pudo llegar a Firebase — problema de conexión/config, no de
             # credenciales. Se avisa distinto para no confundir al usuario.
@@ -136,6 +160,41 @@ def api_login():
                 ),
                 503,
             )
+        if signin is None:
+            info = None
+        else:
+            # Candado por dispositivo (1 cuenta = 1 computadora), si está
+            # configurado (FIREBASE_PROJECT_ID). Se hace ANTES de crear la
+            # sesión: si la cuenta ya está atada a otra máquina, no entra.
+            if auth.device_binding_habilitado():
+                try:
+                    estado = auth.verificar_o_atar_dispositivo(
+                        signin["uid"],
+                        signin["id_token"],
+                        _get_or_create_device_id(),
+                        socket.gethostname(),
+                    )
+                except auth.AuthRedError:
+                    return (
+                        jsonify(
+                            {
+                                "error": "No se pudo verificar el dispositivo "
+                                "por internet (revisa la conexión). Intenta de nuevo."
+                            }
+                        ),
+                        503,
+                    )
+                if estado == "otro_dispositivo":
+                    return (
+                        jsonify(
+                            {
+                                "error": "Esta cuenta ya está registrada en otra "
+                                "computadora. Pídele al administrador que la libere."
+                            }
+                        ),
+                        403,
+                    )
+            info = {"usuario": signin["usuario"], "nombre": signin["nombre"]}
     else:
         info = auth.verify_login(usuario, password)
     if info is None:
