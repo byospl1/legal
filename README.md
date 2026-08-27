@@ -79,6 +79,14 @@ administras todas las cuentas desde un solo panel web, y varias computadoras
 del despacho comparten los mismos usuarios. Requiere internet al iniciar
 sesión.
 
+> **Este despacho ya tiene Firebase configurado.** Los archivos
+> `firebase-api-key.txt` y `firebase-project-id.txt` ya vienen incluidos en el
+> proyecto (repositorio privado), así que al descargarlo el login por Firebase
+> y el candado por dispositivo quedan activos solos — **no hace falta crear
+> esos archivos**. Los pasos de abajo documentan cómo se hizo la configuración
+> del proyecto de Firebase (crear cuentas, cerrar el auto-registro, reglas de
+> Firestore), que sí se administran desde la consola.
+
 **Configuración (una sola vez, la hace el administrador):**
 
 1. Entra a https://console.firebase.google.com/ con una cuenta de Google
