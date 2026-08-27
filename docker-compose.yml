@@ -7,6 +7,10 @@ services:
       # redeploy) todos los usuarios logueados perderían la sesión al
       # actualizar. Se fija en .env (ver .env.example), NUNCA hardcodeado acá.
       - SECRET_KEY=${SECRET_KEY}
+      # Activa el login (obligatorio en la nube, expuesto a internet). En uso
+      # local (python app.py) el login queda apagado por defecto — ver
+      # LOGIN_HABILITADO en app.py.
+      - EOIR_LOGIN=1
     volumes:
       # Datos reales del despacho — persisten aunque se reconstruya la
       # imagen (`docker compose up --build`). Nunca viven dentro de la

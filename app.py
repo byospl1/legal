@@ -67,6 +67,15 @@ app = Flask(__name__, static_folder="static", static_url_path="/static")
 # genera una al vuelo, total no hay usuarios reales fuera de localhost.
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 
+# El login solo tiene sentido cuando la app queda expuesta a internet (varios
+# usuarios, reverse proxy). En uso local en una sola máquina del despacho
+# (`python app.py` vía iniciar.bat) es fricción innecesaria y dejaría al
+# usuario trabado en la pantalla de login sin ningún usuario creado. Por eso
+# está APAGADO por defecto: solo se activa cuando corre en la nube, donde
+# docker-compose.yml setea EOIR_LOGIN=1. Con el login apagado, todas las
+# rutas quedan accesibles sin sesión, igual que antes de agregar el login.
+LOGIN_HABILITADO = os.environ.get("EOIR_LOGIN", "").strip() == "1"
+
 # Rutas accesibles SIN login — la propia pantalla de login (+ su endpoint de
 # API), assets estáticos, y el health check que usa el reverse proxy/orquestador.
 _RUTAS_PUBLICAS = {"login", "api_login", "static", "healthz"}
@@ -74,6 +83,8 @@ _RUTAS_PUBLICAS = {"login", "api_login", "static", "healthz"}
 
 @app.before_request
 def _exigir_login():
+    if not LOGIN_HABILITADO:
+        return None
     if request.endpoint is None:
         return None
     if request.endpoint in _RUTAS_PUBLICAS or request.endpoint.startswith("static"):
@@ -92,7 +103,7 @@ def healthz():
 
 @app.get("/login")
 def login():
-    if session.get("usuario"):
+    if not LOGIN_HABILITADO or session.get("usuario"):
         return redirect("/")
     return send_from_directory(BASE_DIR / "static", "login.html")
 
@@ -203,9 +214,15 @@ def como_funciona():
 
 @app.get("/api/init")
 def api_init():
+    usuario = (
+        {"usuario": session.get("usuario"), "nombre": session.get("nombre")}
+        if LOGIN_HABILITADO
+        else None
+    )
     return jsonify(
         {
-            "usuario": {"usuario": session.get("usuario"), "nombre": session.get("nombre")},
+            "login_habilitado": LOGIN_HABILITADO,
+            "usuario": usuario,
             "catalogos": _catalogos(),
             "plantillas": _registro_plantillas()["plantillas"],
             "casos": list_cases(),

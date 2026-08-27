@@ -118,12 +118,19 @@ async function init() {
 
   const logoutLink = $("#logout-link");
   if (logoutLink) {
-    if (data.usuario && data.usuario.nombre) logoutLink.textContent = `Cerrar sesión (${data.usuario.nombre})`;
-    logoutLink.addEventListener("click", async (ev) => {
-      ev.preventDefault();
-      await fetch("/api/logout", { method: "POST" });
-      window.location.href = "/login";
-    });
+    // El login solo se usa en el despliegue en la nube; en local está apagado
+    // (data.login_habilitado === false) y no tiene sentido mostrar "Cerrar
+    // sesión" — se oculta el link por completo.
+    if (!data.login_habilitado) {
+      logoutLink.style.display = "none";
+    } else {
+      if (data.usuario && data.usuario.nombre) logoutLink.textContent = `Cerrar sesión (${data.usuario.nombre})`;
+      logoutLink.addEventListener("click", async (ev) => {
+        ev.preventDefault();
+        await fetch("/api/logout", { method: "POST" });
+        window.location.href = "/login";
+      });
+    }
   }
 
   fillDatalist("dlCorteSede", CATALOGOS.corte_sede);
