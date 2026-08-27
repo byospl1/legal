@@ -1781,24 +1781,37 @@ requiere cambiar nada del código, solo el paso 1 de `DEPLOY.md`.
   (`werkzeug.security` ya viene con Flask, no se agregó Flask-Login a
   propósito — con `session` de Flask + un decorator/`before_request`
   alcanza y hay menos que aprender/mantener).
-- **El login está APAGADO por defecto — solo se activa en la nube
-  (2026-08-27).** `app.py` tiene un flag `LOGIN_HABILITADO =
-  os.environ.get("EOIR_LOGIN", "").strip() == "1"`. Con el login apagado
-  (uso local en una sola máquina del despacho, `python app.py` vía
-  `iniciar.bat`) `_exigir_login` hace short-circuit y TODAS las rutas
-  quedan accesibles sin sesión, exactamente como antes de agregar el
-  login — el usuario entra directo, sin pantalla de login ni usuario que
-  crear. `docker-compose.yml` setea `EOIR_LOGIN=1` para que en la nube
-  (expuesta a internet, varios usuarios) el login SÍ sea obligatorio.
-  **Motivo del cambio**: el despacho decidió (2026-08-27) quedarse con el
-  uso local y descartar el despliegue en la nube por complejidad de
-  montaje — con el login siempre obligatorio, al descargar el proyecto y
-  correrlo local quedaban trabados en `/login` sin ningún usuario creado.
-  El código de login/Docker/CI se dejó intacto (por si el despacho retoma
-  la nube más adelante), solo se lo hizo opt-in. `/api/init` devuelve
-  `login_habilitado` (bool) y `usuario: null` cuando está apagado; el
-  frontend (`app.js` y el script inline de `como-funciona.html`) oculta el
-  link "Cerrar sesión" cuando `login_habilitado === false`.
+- **El login es opt-in por variable de entorno `EOIR_LOGIN` (2026-08-27).**
+  `app.py` tiene un flag `LOGIN_HABILITADO = os.environ.get("EOIR_LOGIN",
+  "").strip() == "1"`. **El default del código es APAGADO** — con el login
+  apagado `_exigir_login` hace short-circuit y TODAS las rutas quedan
+  accesibles sin sesión, exactamente como antes de agregar el login (así
+  siguen los tests y cualquier `python app.py` directo sin la variable).
+  Quién lo prende:
+  - **Local (Windows)**: `iniciar.bat` setea `set EOIR_LOGIN=1` → el login
+    es **obligatorio** en el uso diario del despacho (decisión del usuario
+    2026-08-27: "login obligatorio", sin dejar una vía sin login que se
+    pueda saltar). `iniciar.bat` además chequea `auth.list_users()` y, si
+    no hay ningún usuario creado, avisa y manda a `gestionar-usuarios.bat`
+    antes de arrancar (si no, nadie podría entrar). Los usuarios se
+    administran con `gestionar-usuarios.bat` (menú que envuelve
+    `scripts/manage_users.py`: crear/listar/cambiar contraseña/borrar).
+  - **Nube (Docker)**: `docker-compose.yml` setea `EOIR_LOGIN=1`.
+  **Contexto del cambio**: el despacho decidió (2026-08-27) quedarse con el
+  uso local y descartar el despliegue en la nube por complejidad de montaje.
+  Primero se hizo el login opt-in (para que el arranque local no quedara
+  trabado en `/login` sin usuarios), y luego el usuario pidió activarlo en
+  local igual, como control de accesos obligatorio. El código de
+  login/Docker/CI quedó intacto por si se retoma la nube. `/api/init`
+  devuelve `login_habilitado` (bool) y `usuario: null` cuando está apagado;
+  el frontend (`app.js` y el script inline de `como-funciona.html`) oculta
+  el link "Cerrar sesión" cuando `login_habilitado === false`.
+  **Limitación honesta anotada al usuario**: en una sola máquina el login
+  controla el acceso a la app y deja auditoría, pero alguien con acceso a
+  los archivos podría sortearlo (editar el `.bat`, correr sin la variable);
+  para control fuerte/centralizado haría falta el servidor. El usuario
+  preguntó por validar credenciales contra Firebase — pendiente de decidir
+  (ver más abajo si se implementó).
 - Cuando `LOGIN_HABILITADO` es `True`: `@app.before_request`
   (`_exigir_login`) protege TODAS las rutas salvo `_RUTAS_PUBLICAS =
   {"login", "api_login", "static", "healthz"}` — si se agrega una ruta
