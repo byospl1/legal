@@ -1781,15 +1781,33 @@ requiere cambiar nada del código, solo el paso 1 de `DEPLOY.md`.
   (`werkzeug.security` ya viene con Flask, no se agregó Flask-Login a
   propósito — con `session` de Flask + un decorator/`before_request`
   alcanza y hay menos que aprender/mantener).
-- `app.py`: `@app.before_request` (`_exigir_login`) protege TODAS las
-  rutas salvo `_RUTAS_PUBLICAS = {"login", "api_login", "static",
-  "healthz"}` — si se agrega una ruta nueva que deba ser pública (poco
-  común), hay que sumarla ahí explícitamente; el default es "requiere
-  login", no al revés. Una request a `/api/*` sin sesión devuelve 401 JSON
-  (el frontend, en `api()` de `app.js`, redirige solo a `/login` al ver un
-  401 — así una sesión expirada no deja a alguien mirando errores en
-  consola sin saber qué pasó); una request a una página HTML sin sesión
-  redirige 302 a `/login`.
+- **El login está APAGADO por defecto — solo se activa en la nube
+  (2026-08-27).** `app.py` tiene un flag `LOGIN_HABILITADO =
+  os.environ.get("EOIR_LOGIN", "").strip() == "1"`. Con el login apagado
+  (uso local en una sola máquina del despacho, `python app.py` vía
+  `iniciar.bat`) `_exigir_login` hace short-circuit y TODAS las rutas
+  quedan accesibles sin sesión, exactamente como antes de agregar el
+  login — el usuario entra directo, sin pantalla de login ni usuario que
+  crear. `docker-compose.yml` setea `EOIR_LOGIN=1` para que en la nube
+  (expuesta a internet, varios usuarios) el login SÍ sea obligatorio.
+  **Motivo del cambio**: el despacho decidió (2026-08-27) quedarse con el
+  uso local y descartar el despliegue en la nube por complejidad de
+  montaje — con el login siempre obligatorio, al descargar el proyecto y
+  correrlo local quedaban trabados en `/login` sin ningún usuario creado.
+  El código de login/Docker/CI se dejó intacto (por si el despacho retoma
+  la nube más adelante), solo se lo hizo opt-in. `/api/init` devuelve
+  `login_habilitado` (bool) y `usuario: null` cuando está apagado; el
+  frontend (`app.js` y el script inline de `como-funciona.html`) oculta el
+  link "Cerrar sesión" cuando `login_habilitado === false`.
+- Cuando `LOGIN_HABILITADO` es `True`: `@app.before_request`
+  (`_exigir_login`) protege TODAS las rutas salvo `_RUTAS_PUBLICAS =
+  {"login", "api_login", "static", "healthz"}` — si se agrega una ruta
+  nueva que deba ser pública (poco común), hay que sumarla ahí
+  explícitamente; el default es "requiere login", no al revés. Una request
+  a `/api/*` sin sesión devuelve 401 JSON (el frontend, en `api()` de
+  `app.js`, redirige solo a `/login` al ver un 401 — así una sesión
+  expirada no deja a alguien mirando errores en consola sin saber qué
+  pasó); una request a una página HTML sin sesión redirige 302 a `/login`.
 - **Bug encontrado y corregido durante la prueba manual de este mismo
   cambio**: `_RUTAS_PUBLICAS` inicialmente solo tenía `"login"` (el nombre
   de la función de la página HTML) pero NO `"api_login"` (el endpoint del
