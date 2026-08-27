@@ -66,12 +66,53 @@ Después, `iniciar.bat` pedirá login normalmente. Las contraseñas se guardan
 **cifradas** en `usuarios/usuarios.json` (nunca en texto plano) y ese
 archivo no se sube al repositorio.
 
-> **Nota de alcance:** al ser un programa local en una sola máquina, el
-> login controla el acceso a la aplicación y deja auditoría de uso, pero no
-> es una barrera infranqueable — alguien con acceso a los archivos de la
-> computadora podría sortearlo. Para un control fuerte y centralizado
-> (cuentas administradas desde internet, varias máquinas) haría falta el
-> despliegue con servidor. Consúltalo si lo necesitas.
+> **Nota de alcance:** con el login local, las cuentas viven en cada
+> computadora por separado. Si quieres **administrar las cuentas desde un
+> solo lado (por internet)** y que varias máquinas compartan los mismos
+> usuarios, usa la opción de Firebase de abajo.
+
+### Opción avanzada: validar el login con Firebase (por internet)
+
+En vez del login local, puedes validar usuario y contraseña **por internet
+contra Firebase Authentication** (un servicio gratuito de Google). Ventaja:
+administras todas las cuentas desde un solo panel web, y varias computadoras
+del despacho comparten los mismos usuarios. Requiere internet al iniciar
+sesión.
+
+**Configuración (una sola vez, la hace el administrador):**
+
+1. Entra a https://console.firebase.google.com/ con una cuenta de Google
+   (gratis, sin tarjeta) y crea un proyecto (ej. "Kostiv EOIR"). Puedes
+   desactivar Google Analytics.
+2. Menú lateral → **Build → Authentication → Comenzar (Get started)**.
+3. En **Sign-in method**, habilita **Correo electrónico/contraseña**
+   (Email/Password) y guarda.
+4. Pestaña **Users → Agregar usuario**: crea una cuenta (correo +
+   contraseña) por cada persona del despacho. **Aquí administras las cuentas
+   siempre** (agregar, quitar, resetear contraseña).
+5. Consigue la *Web API key*: ícono de engranaje (**Configuración del
+   proyecto**) → pestaña **General** → sección **Tus apps** → si no hay una
+   app web, crea una con el ícono `</>` (cualquier apodo, no necesitas
+   Hosting) → copia el valor **apiKey** (empieza con `AIza...`).
+6. En la carpeta del proyecto, crea un archivo de texto llamado exactamente
+   **`firebase-api-key.txt`** y pega adentro **solo esa apiKey**, en una sola
+   línea, sin comillas. Guárdalo.
+7. Doble clic en **`iniciar.bat`**: ahora la pantalla de login pedirá
+   **correo electrónico** y contraseña, validados contra Firebase.
+
+**Notas:**
+
+- Los usuarios inician sesión con su **correo** (el que creaste en Firebase),
+  no con un usuario corto.
+- La *Web API key* no es secreta (es la misma que llevaría cualquier app
+  cliente), pero es específica de tu instalación — por eso
+  `firebase-api-key.txt` no se sube al repositorio. Pon ese archivo solo en
+  las computadoras del despacho.
+- Si no hay internet al momento de entrar, aparece un aviso claro y no se
+  puede iniciar sesión (la validación es en línea).
+- Para volver al login local, borra o renombra `firebase-api-key.txt`.
+- `gestionar-usuarios.bat` es solo para el login **local**; en modo Firebase
+  las cuentas se administran en el panel de Firebase.
 
 ## Agregar una plantilla `.dotx` nueva
 

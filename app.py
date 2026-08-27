@@ -76,9 +76,9 @@ app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 # rutas quedan accesibles sin sesión, igual que antes de agregar el login.
 LOGIN_HABILITADO = os.environ.get("EOIR_LOGIN", "").strip() == "1"
 
-# Rutas accesibles SIN login — la propia pantalla de login (+ su endpoint de
+# Rutas accesibles SIN login — la propia pantalla de login (+ sus endpoints de
 # API), assets estáticos, y el health check que usa el reverse proxy/orquestador.
-_RUTAS_PUBLICAS = {"login", "api_login", "static", "healthz"}
+_RUTAS_PUBLICAS = {"login", "api_login", "api_login_info", "static", "healthz"}
 
 
 @app.before_request
@@ -108,12 +108,36 @@ def login():
     return send_from_directory(BASE_DIR / "static", "login.html")
 
 
+@app.get("/api/login-info")
+def api_login_info():
+    """Datos que la pantalla de login necesita ANTES de autenticar: qué modo
+    de login está activo (local vs. Firebase), para mostrar el rótulo correcto
+    ('Usuario' o 'Correo electrónico'). No expone nada sensible."""
+    return jsonify({"modo": "firebase" if auth.firebase_habilitado() else "local"})
+
+
 @app.post("/api/login")
 def api_login():
     body = request.get_json(force=True, silent=True) or {}
     usuario = str(body.get("usuario", "")).strip()
     password = str(body.get("password", ""))
-    info = auth.verify_login(usuario, password)
+    if auth.firebase_habilitado():
+        try:
+            info = auth.verify_login_firebase(usuario, password)
+        except auth.AuthRedError:
+            # No se pudo llegar a Firebase — problema de conexión/config, no de
+            # credenciales. Se avisa distinto para no confundir al usuario.
+            return (
+                jsonify(
+                    {
+                        "error": "No se pudo validar el login por internet "
+                        "(revisa la conexión). Intenta de nuevo."
+                    }
+                ),
+                503,
+            )
+    else:
+        info = auth.verify_login(usuario, password)
     if info is None:
         return jsonify({"error": "Usuario o contraseña incorrectos"}), 401
     session.clear()

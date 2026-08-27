@@ -395,6 +395,90 @@ def test_sugerir_anio_rango():
     _assert(_ANIO_RE.search("year 2100") is None, "2100 no debería reconocerse")
 
 
+def _fake_firebase_urlopen(status_body=None, http_error_code=None, url_error=False):
+    """Devuelve un reemplazo de urllib.request.urlopen que simula la respuesta
+    de Firebase sin tocar internet."""
+    import io
+    import json as _json
+    import urllib.error
+
+    def _fake(req, timeout=None):  # noqa: ARG001
+        if url_error:
+            raise urllib.error.URLError("sin conexión simulada")
+        if http_error_code is not None:
+            raise urllib.error.HTTPError(
+                "url", http_error_code, "err", {}, io.BytesIO(b"{}")
+            )
+
+        class _Resp:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+
+            def read(self_inner):
+                return _json.dumps(status_body or {}).encode("utf-8")
+
+        return _Resp()
+
+    return _fake
+
+
+def test_firebase_login_ok():
+    from motor import auth
+
+    orig = auth.urllib.request.urlopen
+    auth.urllib.request.urlopen = _fake_firebase_urlopen(
+        status_body={"email": "juan@kostiv.com", "displayName": "Juan Perez"}
+    )
+    try:
+        info = auth.verify_login_firebase("juan@kostiv.com", "clave", api_key="fake")
+    finally:
+        auth.urllib.request.urlopen = orig
+    _assert(info == {"usuario": "juan@kostiv.com", "nombre": "Juan Perez"}, f"info inesperado: {info}")
+
+
+def test_firebase_login_credenciales_malas():
+    from motor import auth
+
+    orig = auth.urllib.request.urlopen
+    auth.urllib.request.urlopen = _fake_firebase_urlopen(http_error_code=400)
+    try:
+        info = auth.verify_login_firebase("x@y.com", "mala", api_key="fake")
+    finally:
+        auth.urllib.request.urlopen = orig
+    _assert(info is None, "credenciales malas deben dar None (401), no dict")
+
+
+def test_firebase_login_sin_internet_lanza_red():
+    from motor import auth
+
+    orig = auth.urllib.request.urlopen
+    auth.urllib.request.urlopen = _fake_firebase_urlopen(url_error=True)
+    lanzo = False
+    try:
+        auth.verify_login_firebase("x@y.com", "clave", api_key="fake")
+    except auth.AuthRedError:
+        lanzo = True
+    finally:
+        auth.urllib.request.urlopen = orig
+    _assert(lanzo, "un fallo de red debe lanzar AuthRedError, no devolver None")
+
+
+def test_firebase_habilitado_segun_api_key():
+    from motor import auth
+
+    orig = auth.FIREBASE_API_KEY
+    try:
+        auth.FIREBASE_API_KEY = ""
+        _assert(auth.firebase_habilitado() is False, "sin API key debe estar deshabilitado")
+        auth.FIREBASE_API_KEY = "AIzaSyFake"
+        _assert(auth.firebase_habilitado() is True, "con API key debe estar habilitado")
+    finally:
+        auth.FIREBASE_API_KEY = orig
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     fallos = 0

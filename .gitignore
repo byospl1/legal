@@ -22,3 +22,7 @@ firmas/preparadores/*.png
 
 # secretos de despliegue (SECRET_KEY, dominio) — nunca en git
 .env
+
+# Web API key de Firebase para el login por internet (config por despacho) —
+# no es secreta, pero es específica de cada instalación, no del código
+firebase-api-key.txt

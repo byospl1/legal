@@ -11,6 +11,9 @@ services:
       # local (python app.py) el login queda apagado por defecto — ver
       # LOGIN_HABILITADO en app.py.
       - EOIR_LOGIN=1
+      # Opcional: si se define en .env, el login se valida contra Firebase
+      # Authentication en vez del JSON local. Vacío = login local. Ver README.
+      - FIREBASE_API_KEY=${FIREBASE_API_KEY:-}
     volumes:
       # Datos reales del despacho — persisten aunque se reconstruya la
       # imagen (`docker compose up --build`). Nunca viven dentro de la

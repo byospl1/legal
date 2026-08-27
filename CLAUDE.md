@@ -1809,9 +1809,37 @@ requiere cambiar nada del código, solo el paso 1 de `DEPLOY.md`.
   **Limitación honesta anotada al usuario**: en una sola máquina el login
   controla el acceso a la app y deja auditoría, pero alguien con acceso a
   los archivos podría sortearlo (editar el `.bat`, correr sin la variable);
-  para control fuerte/centralizado haría falta el servidor. El usuario
-  preguntó por validar credenciales contra Firebase — pendiente de decidir
-  (ver más abajo si se implementó).
+  para control fuerte/centralizado el usuario pidió Firebase (ver abajo).
+- **Backend de login por Firebase (opt-in, 2026-08-27).** A pedido del
+  usuario, el login puede validarse por internet contra **Firebase
+  Authentication** (email/password) en vez del JSON local — así las cuentas
+  se administran centralizadas desde el panel de Firebase y varias máquinas
+  comparten los mismos usuarios. Se activa definiendo `FIREBASE_API_KEY`
+  (la Web API key del proyecto, que NO es secreta). En local, `iniciar.bat`
+  la lee de un archivo `firebase-api-key.txt` (gitignored) si existe; en la
+  nube, de `.env` vía `docker-compose.yml`. Implementación:
+  `motor/auth.verify_login_firebase()` llama al REST
+  `accounts:signInWithPassword` con `urllib` (sin dependencias nuevas);
+  devuelve `{usuario, nombre}` si Firebase acepta, `None` si Firebase
+  rechaza (HTTP 400 = credenciales malas → 401 al usuario), y lanza
+  `auth.AuthRedError` si no se pudo llegar a Firebase (sin internet/timeout/
+  403 de API key/5xx → `app.py` responde 503 con "revisa la conexión", para
+  NO confundirlo con "contraseña incorrecta"). `app.py`: `/api/login`
+  ramifica según `auth.firebase_habilitado()`; nuevo endpoint público
+  `/api/login-info` (`{modo: "firebase"|"local"}`) que usa `login.html` para
+  cambiar el rótulo a "Correo electrónico" y el input a `type=email`. El
+  identificador en modo Firebase es el EMAIL, no un usuario corto.
+  `gestionar-usuarios.bat`/`scripts/manage_users.py` son SOLO para el login
+  local; en modo Firebase las cuentas viven en el panel. Tests: 4 nuevos en
+  `tests/run_tests.py` (`test_firebase_*`, red mockeada, sin tocar internet)
+  → suite en 19/19. Verificado además end-to-end con el Flask test client
+  (login-info modo firebase; creds válidas → 200 + sesión; 400 → 401;
+  URLError → 503). **Pendiente/consultado por el usuario**: limitar "1
+  cuenta = 1 IP/dispositivo" para evitar que se compartan cuentas — en modo
+  LOCAL la IP no sirve (el server solo ve 127.0.0.1 y las máquinas de una
+  oficina comparten IP pública tras NAT); el equivalente real es atar la
+  cuenta a un dispositivo, lo que requiere un store compartido (Firestore).
+  No implementado aún, es una decisión de alcance aparte.
 - Cuando `LOGIN_HABILITADO` es `True`: `@app.before_request`
   (`_exigir_login`) protege TODAS las rutas salvo `_RUTAS_PUBLICAS =
   {"login", "api_login", "static", "healthz"}` — si se agrega una ruta
