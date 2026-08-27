@@ -49,6 +49,30 @@ deberás abrir el Word manualmente para revisarlo.
 Para dejar el sistema corriendo, no cierres la ventana negra (consola) que
 abrió `iniciar.bat`. Para apagarlo, ciérrala.
 
+## Control de accesos (login)
+
+El sistema pide **usuario y contraseña** al entrar, para controlar quién lo
+usa y dejar registro de quién generó cada documento.
+
+**La primera vez, antes de poder entrar, crea al menos un usuario:**
+
+1. Doble clic en **`gestionar-usuarios.bat`**.
+2. Elige la opción **1 (Crear un usuario nuevo)** y escribe usuario, nombre
+   y contraseña. Repite por cada persona del despacho que vaya a usarlo.
+3. Desde ahí también puedes ver la lista, cambiar contraseñas o borrar
+   usuarios.
+
+Después, `iniciar.bat` pedirá login normalmente. Las contraseñas se guardan
+**cifradas** en `usuarios/usuarios.json` (nunca en texto plano) y ese
+archivo no se sube al repositorio.
+
+> **Nota de alcance:** al ser un programa local en una sola máquina, el
+> login controla el acceso a la aplicación y deja auditoría de uso, pero no
+> es una barrera infranqueable — alguien con acceso a los archivos de la
+> computadora podría sortearlo. Para un control fuerte y centralizado
+> (cuentas administradas desde internet, varias máquinas) haría falta el
+> despliegue con servidor. Consúltalo si lo necesitas.
+
 ## Agregar una plantilla `.dotx` nueva
 
 1. Copia el archivo a `plantillas/<id-de-la-plantilla>/archivo.dotx`.
