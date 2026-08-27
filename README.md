@@ -114,6 +114,52 @@ sesión.
 - `gestionar-usuarios.bat` es solo para el login **local**; en modo Firebase
   las cuentas se administran en el panel de Firebase.
 
+#### Candado "1 cuenta = 1 computadora" (evitar que se compartan cuentas)
+
+Opcionalmente, puedes atar cada cuenta a **una sola computadora**: la primera
+vez que alguien entra con su cuenta, queda registrada a esa máquina; si
+intentan usar la misma cuenta en otra computadora, se rechaza. Así una cuenta
+no se puede "pasar" a otra persona. Usa **Firestore** (también gratis, del
+mismo proyecto de Firebase). Solo aplica al uso local (una instalación por
+máquina).
+
+**Configuración (una sola vez, la hace el administrador):**
+
+1. En la consola de Firebase → **Build → Firestore Database → Crear base de
+   datos** → modo **producción** → elige la ubicación → listo.
+2. Pestaña **Rules** (reglas) y pega exactamente esto (deja crear su registro
+   a cada usuario una sola vez, pero **impide moverlo o borrarlo** — solo tú,
+   desde la consola, puedes liberarlo):
+   ```
+   rules_version = '2';
+   service cloud.firestore {
+     match /databases/{database}/documents {
+       match /device_bindings/{uid} {
+         allow read, create: if request.auth != null && request.auth.uid == uid;
+         allow update, delete: if false;
+       }
+     }
+   }
+   ```
+   Da clic en **Publicar**.
+3. En la carpeta del proyecto, crea un archivo de texto llamado exactamente
+   **`firebase-project-id.txt`** con el **ID del proyecto** adentro (una sola
+   línea; es el `projectId` de la config de Firebase, ej. `tabsmaster-12345`).
+4. Doble clic en `iniciar.bat`: ahora, además de validar el login, atará cada
+   cuenta a la computadora donde entra por primera vez.
+
+**Para liberar una cuenta** (cambio de computadora, se dañó la PC, etc.):
+
+- En la consola de Firebase → **Firestore Database** → colección
+  **`device_bindings`** → busca el documento de esa persona (por su ID de
+  usuario) y **bórralo**. La próxima vez que entre, quedará atada a la nueva
+  computadora.
+
+> El ID de la computadora se guarda en el perfil de Windows del usuario
+> (`%USERPROFILE%\.eoir-device-id`), así que sobrevive a actualizaciones del
+> programa. Si no hay internet al iniciar sesión, no se puede entrar (la
+> verificación es en línea, igual que el login).
+
 ## Agregar una plantilla `.dotx` nueva
 
 1. Copia el archivo a `plantillas/<id-de-la-plantilla>/archivo.dotx`.

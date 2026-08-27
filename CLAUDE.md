@@ -1834,12 +1834,49 @@ requiere cambiar nada del código, solo el paso 1 de `DEPLOY.md`.
   `tests/run_tests.py` (`test_firebase_*`, red mockeada, sin tocar internet)
   → suite en 19/19. Verificado además end-to-end con el Flask test client
   (login-info modo firebase; creds válidas → 200 + sesión; 400 → 401;
-  URLError → 503). **Pendiente/consultado por el usuario**: limitar "1
-  cuenta = 1 IP/dispositivo" para evitar que se compartan cuentas — en modo
-  LOCAL la IP no sirve (el server solo ve 127.0.0.1 y las máquinas de una
-  oficina comparten IP pública tras NAT); el equivalente real es atar la
-  cuenta a un dispositivo, lo que requiere un store compartido (Firestore).
-  No implementado aún, es una decisión de alcance aparte.
+  URLError → 503).
+- **Candado "1 cuenta = 1 computadora" por dispositivo vía Firestore
+  (opt-in, 2026-08-27).** El usuario pidió evitar que se compartan cuentas.
+  Se le explicó que "1 cuenta = 1 IP" NO sirve en local (el server solo ve
+  127.0.0.1; las máquinas de una oficina comparten IP pública tras NAT) — el
+  equivalente real es atar la cuenta a un DISPOSITIVO. Se activa cuando
+  además de `FIREBASE_API_KEY` se define `FIREBASE_PROJECT_ID`
+  (`auth.device_binding_habilitado()`). Mecanismo: al hacer login OK,
+  `auth.verificar_o_atar_dispositivo(uid, id_token, device_id, hostname)`
+  consulta Firestore (`device_bindings/{uid}`) vía REST con el `idToken` del
+  propio usuario como Bearer: si no existe → lo crea con precondición
+  atómica `currentDocument.exists=false` (devuelve "ok"); si existe y el
+  `device_id` coincide → "ok"; si es otro → "otro_dispositivo" → `app.py`
+  responde **403** "ya registrada en otra computadora". Error de red/servicio
+  → `AuthRedError` → 503. El `device_id` es un uuid persistido en
+  `Path.home()/.eoir-device-id` (perfil del SO, NO la carpeta del proyecto —
+  así sobrevive a una reinstalación/actualización; si se regenerara en cada
+  update trabaría la cuenta). El admin libera una cuenta borrando el
+  documento en la consola de Firestore. **Reglas de seguridad clave** (el
+  usuario las pega en la consola, ver README): `allow read, create` solo al
+  dueño (`request.auth.uid == uid`), `allow update, delete: if false` — así
+  el usuario puede crear su binding pero NO moverlo/borrarlo; solo el admin
+  (consola, que saltea las reglas) puede liberarlo. Sin esas reglas, un
+  usuario podría borrar su propio binding y saltar el candado. **NO se activa
+  en la nube** a propósito (docker-compose NO pasa `FIREBASE_PROJECT_ID`):
+  ahí todos comparten un solo servidor, atar "al dispositivo" trabaría a
+  todos menos al primero. Tests: 5 nuevos `test_device_binding_*` (Firestore
+  mockeado). Suite 24/24. Verificado end-to-end con Flask test client
+  (primera vez ata → 200; misma máquina → 200; otra máquina → 403; Firestore
+  sin red → 503).
+- **Config de Firebase fuera del repo (2026-08-27).** El proyecto real del
+  despacho es `tabsmaster-36366`. La Web API key y el project id NO son
+  secretos (la apiKey es pública por diseño en apps cliente), pero igual se
+  mantienen fuera de git: `firebase-api-key.txt`/`firebase-project-id.txt`
+  están gitignored; `iniciar.bat` los lee a env vars. **Protección real
+  (anotada al usuario, no es "esconder la apiKey")**: como email/password
+  permite auto-signup vía API con solo la apiKey, conviene DESACTIVAR el
+  sign-up en Firebase Auth (Authentication → Settings) para que una apiKey
+  vista por alguien no le deje crear cuentas; + restringir la API key en
+  Google Cloud Console a solo Identity Toolkit + Firestore; + reglas de
+  Firestore de arriba; + repo privado. Encriptar la apiKey en el repo no
+  agrega seguridad real (el programa la debe descifrar y usar en la máquina
+  igual).
 - Cuando `LOGIN_HABILITADO` es `True`: `@app.before_request`
   (`_exigir_login`) protege TODAS las rutas salvo `_RUTAS_PUBLICAS =
   {"login", "api_login", "static", "healthz"}` — si se agrega una ruta

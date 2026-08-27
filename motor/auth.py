@@ -120,14 +120,16 @@ def firebase_habilitado() -> bool:
     return bool(FIREBASE_API_KEY)
 
 
-def verify_login_firebase(
+def firebase_signin(
     email: str, password: str, api_key: str | None = None, timeout: float = 10.0
 ) -> dict | None:
     """Valida email + contraseña contra Firebase Authentication (REST API
-    `accounts:signInWithPassword`). Devuelve {"usuario", "nombre"} si son
-    correctas, None si Firebase las rechaza (email inexistente o contraseña
-    mala). Lanza `AuthRedError` si no se pudo llegar a Firebase (sin internet,
-    timeout, servicio caído) — eso NO es un rechazo de credenciales."""
+    `accounts:signInWithPassword`). Devuelve un dict con {"usuario", "nombre",
+    "id_token", "uid"} si son correctas (el id_token y el uid se usan después
+    para el candado por dispositivo en Firestore), None si Firebase las
+    rechaza (email inexistente o contraseña mala). Lanza `AuthRedError` si no
+    se pudo llegar a Firebase (sin internet, timeout, servicio caído) — eso
+    NO es un rechazo de credenciales."""
     email = email.strip()
     key = (api_key or FIREBASE_API_KEY).strip()
     if not key:
@@ -161,7 +163,162 @@ def verify_login_firebase(
 
     correo = data.get("email", email)
     nombre = data.get("displayName") or correo
-    return {"usuario": correo, "nombre": nombre}
+    return {
+        "usuario": correo,
+        "nombre": nombre,
+        "id_token": data.get("idToken", ""),
+        "uid": data.get("localId", ""),
+    }
+
+
+def verify_login_firebase(
+    email: str, password: str, api_key: str | None = None, timeout: float = 10.0
+) -> dict | None:
+    """Igual que `firebase_signin` pero devuelve solo {"usuario", "nombre"}
+    (sin el id_token/uid internos) — para el caso simple sin candado por
+    dispositivo. `app.py` usa `firebase_signin` directamente cuando el
+    candado está activo."""
+    info = firebase_signin(email, password, api_key, timeout)
+    if info is None:
+        return None
+    return {"usuario": info["usuario"], "nombre": info["nombre"]}
+
+
+# --- Candado por dispositivo (1 cuenta = 1 computadora) vía Firestore -------
+# Cuando además de FIREBASE_API_KEY se define FIREBASE_PROJECT_ID, el login
+# ata cada cuenta a la primera computadora donde entra: se guarda en Firestore
+# un documento `device_bindings/{uid}` con el device_id de esa máquina. Si la
+# misma cuenta intenta entrar desde otra computadora (device_id distinto), se
+# rechaza. El admin "libera" la cuenta borrando ese documento desde la consola
+# de Firebase. Es un mecanismo pensado para instalaciones LOCALES (una por
+# máquina) — NO se activa en la nube (ahí todos comparten un solo servidor).
+FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "").strip()
+_FIRESTORE_DOC_URL = (
+    "https://firestore.googleapis.com/v1/projects/{project}"
+    "/databases/(default)/documents/{collection}/{doc}"
+)
+_DEVICE_BINDINGS_COLLECTION = "device_bindings"
+
+
+def device_binding_habilitado() -> bool:
+    """True si hay API key Y project id → se aplica el candado por
+    dispositivo. Sin project id, el login por Firebase funciona igual pero
+    sin candado."""
+    return bool(FIREBASE_API_KEY and FIREBASE_PROJECT_ID)
+
+
+def _firestore_valores_simples(fields: dict) -> dict:
+    """Aplana los `fields` de un documento Firestore ({"k": {"stringValue":
+    ...}}) a un dict plano {"k": valor}. Solo maneja los tipos que usamos
+    (string/timestamp)."""
+    out = {}
+    for k, v in (fields or {}).items():
+        if "stringValue" in v:
+            out[k] = v["stringValue"]
+        elif "timestampValue" in v:
+            out[k] = v["timestampValue"]
+    return out
+
+
+def _firestore_get(project_id: str, doc_id: str, id_token: str, timeout: float = 10.0) -> dict | None:
+    """Lee `device_bindings/{doc_id}`. Devuelve el dict plano de campos si
+    existe, None si no existe (404). Lanza `AuthRedError` ante cualquier otro
+    error (red/permisos/servicio)."""
+    url = _FIRESTORE_DOC_URL.format(
+        project=project_id, collection=_DEVICE_BINDINGS_COLLECTION, doc=doc_id
+    )
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {id_token}"}, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return _firestore_valores_simples(data.get("fields", {}))
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise AuthRedError(f"Firestore GET respondió {e.code}") from e
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as e:
+        raise AuthRedError(str(e)) from e
+
+
+def _firestore_create_if_absent(
+    project_id: str, doc_id: str, fields: dict, id_token: str, timeout: float = 10.0
+) -> bool:
+    """Crea `device_bindings/{doc_id}` SOLO si no existe (precondición
+    `currentDocument.exists=false`, atómica del lado de Firestore). Devuelve
+    True si lo creó, False si ya existía (carrera con otra máquina). Lanza
+    `AuthRedError` ante error de red/servicio."""
+    url = (
+        _FIRESTORE_DOC_URL.format(
+            project=project_id, collection=_DEVICE_BINDINGS_COLLECTION, doc=doc_id
+        )
+        + "?currentDocument.exists=false"
+    )
+    payload = json.dumps({"fields": fields}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Authorization": f"Bearer {id_token}", "Content-Type": "application/json"},
+        method="PATCH",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout):
+            return True
+    except urllib.error.HTTPError as e:
+        # La precondición fallida (ya existía) puede venir como 409/412, o como
+        # 400 FAILED_PRECONDITION según el endpoint. En esos casos NO es error:
+        # significa que otra máquina ganó la carrera y ya lo creó.
+        if e.code in (409, 412):
+            return False
+        if e.code == 400:
+            try:
+                cuerpo = e.read().decode("utf-8", "ignore")
+            except Exception:  # noqa: BLE001
+                cuerpo = ""
+            if "FAILED_PRECONDITION" in cuerpo or "already exists" in cuerpo.lower():
+                return False
+        raise AuthRedError(f"Firestore create respondió {e.code}") from e
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise AuthRedError(str(e)) from e
+
+
+def verificar_o_atar_dispositivo(
+    uid: str,
+    id_token: str,
+    device_id: str,
+    hostname: str = "",
+    project_id: str | None = None,
+    timeout: float = 10.0,
+) -> str:
+    """Aplica el candado: si la cuenta (uid) no está atada a ninguna máquina,
+    la ata a `device_id` (devuelve "ok"); si ya está atada a ESTA máquina,
+    "ok"; si está atada a OTRA, "otro_dispositivo". Lanza `AuthRedError` si no
+    se pudo consultar Firestore."""
+    import datetime
+
+    project = (project_id or FIREBASE_PROJECT_ID).strip()
+    if not project:
+        raise AuthRedError("FIREBASE_PROJECT_ID no configurada")
+
+    existing = _firestore_get(project, uid, id_token, timeout)
+    if existing is None:
+        fields = {
+            "device_id": {"stringValue": device_id},
+            "hostname": {"stringValue": hostname},
+            "bound_at": {
+                "timestampValue": datetime.datetime.now(datetime.timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
+            },
+        }
+        if _firestore_create_if_absent(project, uid, fields, id_token, timeout):
+            return "ok"
+        # Perdió la carrera: alguien lo creó en el ínterin — releer para
+        # comparar contra lo que quedó guardado.
+        existing = _firestore_get(project, uid, id_token, timeout)
+
+    if existing and existing.get("device_id") == device_id:
+        return "ok"
+    return "otro_dispositivo"
 
 
 def registrar_auditoria(usuario: str, evento: str, detalle: dict, log_file: Path = AUDIT_LOG_FILE) -> None:

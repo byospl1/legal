@@ -466,6 +466,76 @@ def test_firebase_login_sin_internet_lanza_red():
     _assert(lanzo, "un fallo de red debe lanzar AuthRedError, no devolver None")
 
 
+def test_device_binding_primera_vez_ata():
+    from motor import auth
+
+    og, oc = auth._firestore_get, auth._firestore_create_if_absent
+    auth._firestore_get = lambda *a, **k: None  # no existe binding
+    auth._firestore_create_if_absent = lambda *a, **k: True  # se creó
+    try:
+        estado = auth.verificar_o_atar_dispositivo("uid1", "tok", "DEV-1", project_id="proj")
+    finally:
+        auth._firestore_get, auth._firestore_create_if_absent = og, oc
+    _assert(estado == "ok", f"primera vez debe atar y dar ok, dio {estado}")
+
+
+def test_device_binding_misma_maquina():
+    from motor import auth
+
+    og = auth._firestore_get
+    auth._firestore_get = lambda *a, **k: {"device_id": "DEV-1"}
+    try:
+        estado = auth.verificar_o_atar_dispositivo("uid1", "tok", "DEV-1", project_id="proj")
+    finally:
+        auth._firestore_get = og
+    _assert(estado == "ok", f"misma máquina debe dar ok, dio {estado}")
+
+
+def test_device_binding_otra_maquina():
+    from motor import auth
+
+    og = auth._firestore_get
+    auth._firestore_get = lambda *a, **k: {"device_id": "DEV-2"}
+    try:
+        estado = auth.verificar_o_atar_dispositivo("uid1", "tok", "DEV-1", project_id="proj")
+    finally:
+        auth._firestore_get = og
+    _assert(estado == "otro_dispositivo", f"otra máquina debe rechazar, dio {estado}")
+
+
+def test_device_binding_carrera_pierde():
+    from motor import auth
+
+    og, oc = auth._firestore_get, auth._firestore_create_if_absent
+    llamadas = {"n": 0}
+
+    def get_racing(*a, **k):
+        # 1ra lectura: no existe; 2da (tras perder la carrera): la ganó otra máquina
+        llamadas["n"] += 1
+        return None if llamadas["n"] == 1 else {"device_id": "DEV-2"}
+
+    auth._firestore_get = get_racing
+    auth._firestore_create_if_absent = lambda *a, **k: False  # perdió la carrera
+    try:
+        estado = auth.verificar_o_atar_dispositivo("uid1", "tok", "DEV-1", project_id="proj")
+    finally:
+        auth._firestore_get, auth._firestore_create_if_absent = og, oc
+    _assert(estado == "otro_dispositivo", f"al perder la carrera debe rechazar, dio {estado}")
+
+
+def test_device_binding_habilitado_segun_config():
+    from motor import auth
+
+    oa, op = auth.FIREBASE_API_KEY, auth.FIREBASE_PROJECT_ID
+    try:
+        auth.FIREBASE_API_KEY, auth.FIREBASE_PROJECT_ID = "k", ""
+        _assert(auth.device_binding_habilitado() is False, "sin project id no debe estar el candado")
+        auth.FIREBASE_API_KEY, auth.FIREBASE_PROJECT_ID = "k", "proj"
+        _assert(auth.device_binding_habilitado() is True, "con api key + project id sí")
+    finally:
+        auth.FIREBASE_API_KEY, auth.FIREBASE_PROJECT_ID = oa, op
+
+
 def test_firebase_habilitado_segun_api_key():
     from motor import auth
 
