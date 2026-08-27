@@ -16,6 +16,9 @@ lógica.
 from __future__ import annotations
 
 import json
+import os
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -23,6 +26,26 @@ from werkzeug.security import check_password_hash, generate_password_hash
 BASE_DIR = Path(__file__).resolve().parent.parent
 USERS_STORE_DIR = BASE_DIR / "usuarios"
 USERS_FILE = USERS_STORE_DIR / "usuarios.json"
+
+# --- Backend opcional de login por Firebase Authentication -----------------
+# Si se define FIREBASE_API_KEY (la Web API key del proyecto de Firebase, que
+# NO es secreta — es la misma que llevaría cualquier app cliente), el login se
+# valida por internet contra Firebase Auth en vez de contra el JSON local. Las
+# cuentas se administran desde el panel de Firebase (Authentication → Users),
+# no con `scripts/manage_users.py`. Ver README (sección Firebase) para el
+# alta del proyecto. Sin esa variable, el login sigue siendo el local de este
+# mismo módulo (`verify_login`).
+FIREBASE_API_KEY = os.environ.get("FIREBASE_API_KEY", "").strip()
+_FIREBASE_SIGNIN_URL = (
+    "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={key}"
+)
+
+
+class AuthRedError(Exception):
+    """Falló la validación por un problema de red (sin internet, timeout,
+    Firebase caído), NO porque las credenciales sean incorrectas. Se maneja
+    aparte para poder avisarle al usuario "no hay conexión" en vez de
+    "usuario o contraseña incorrectos"."""
 
 # Registro de generación de documentos por usuario (auditoría mínima: quién
 # generó qué, cuándo). Un archivo de líneas JSON (append-only), no una base
@@ -89,6 +112,56 @@ def verify_login(usuario: str, password: str, store_file: Path = USERS_FILE) -> 
     if not info or not check_password_hash(info["password_hash"], password):
         return None
     return {"usuario": usuario, "nombre": info.get("nombre", usuario)}
+
+
+def firebase_habilitado() -> bool:
+    """True si hay una FIREBASE_API_KEY configurada → el login se valida
+    contra Firebase por internet en vez de contra el JSON local."""
+    return bool(FIREBASE_API_KEY)
+
+
+def verify_login_firebase(
+    email: str, password: str, api_key: str | None = None, timeout: float = 10.0
+) -> dict | None:
+    """Valida email + contraseña contra Firebase Authentication (REST API
+    `accounts:signInWithPassword`). Devuelve {"usuario", "nombre"} si son
+    correctas, None si Firebase las rechaza (email inexistente o contraseña
+    mala). Lanza `AuthRedError` si no se pudo llegar a Firebase (sin internet,
+    timeout, servicio caído) — eso NO es un rechazo de credenciales."""
+    email = email.strip()
+    key = (api_key or FIREBASE_API_KEY).strip()
+    if not key:
+        raise AuthRedError("FIREBASE_API_KEY no configurada")
+    if not email or not password:
+        return None
+
+    payload = json.dumps(
+        {"email": email, "password": password, "returnSecureToken": True}
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        _FIREBASE_SIGNIN_URL.format(key=key),
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # 400 = credenciales inválidas (EMAIL_NOT_FOUND / INVALID_PASSWORD /
+        # INVALID_LOGIN_CREDENTIALS / USER_DISABLED). Cualquier otro código
+        # (403 API key mala, 5xx) es un problema de configuración/servicio,
+        # no del usuario → se trata como error de red para no decirle
+        # "contraseña incorrecta" cuando el problema es del lado del sistema.
+        if e.code == 400:
+            return None
+        raise AuthRedError(f"Firebase respondió {e.code}") from e
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as e:
+        raise AuthRedError(str(e)) from e
+
+    correo = data.get("email", email)
+    nombre = data.get("displayName") or correo
+    return {"usuario": correo, "nombre": nombre}
 
 
 def registrar_auditoria(usuario: str, evento: str, detalle: dict, log_file: Path = AUDIT_LOG_FILE) -> None:
