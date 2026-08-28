@@ -14,8 +14,10 @@ from __future__ import annotations
 import os
 import platform
 import shutil
-import subprocess
+import subprocess  # nosec B404
 from pathlib import Path
+
+# Solo ejecutables locales con listas argv; nunca se usa shell=True.
 
 
 class PdfToolsError(Exception):
@@ -83,6 +85,15 @@ def _find_pdftoppm() -> str:
             if candidate.is_file():
                 return str(candidate)
         for candidate in base.glob("poppler*/bin/pdftoppm.exe"):
+            if candidate.is_file():
+                return str(candidate)
+
+    # winget instala la distribución portable de Poppler dentro del perfil
+    # del usuario, no necesariamente en PATH ni en C:\poppler.
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        winget_packages = Path(local_app_data) / "Microsoft" / "WinGet" / "Packages"
+        for candidate in winget_packages.glob("oschwartz10612.Poppler*/Library/bin/pdftoppm.exe"):
             if candidate.is_file():
                 return str(candidate)
 
@@ -155,7 +166,8 @@ def _convert_with_word(docx_path: Path, out_dir: Path, timeout: int = 180) -> Pa
     pdf_path = out_dir / (docx_path.stem + ".pdf")
 
     try:
-        result = subprocess.run(
+        # sys.executable es fijo y ambas rutas se resuelven localmente.
+        result = subprocess.run(  # nosec B603
             [
                 sys.executable,
                 "-c",
@@ -166,6 +178,7 @@ def _convert_with_word(docx_path: Path, out_dir: Path, timeout: int = 180) -> Pa
             capture_output=True,
             text=True,
             timeout=timeout,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         raise PdfToolsError(
@@ -203,7 +216,8 @@ def _convert_with_libreoffice(docx_path: Path, out_dir: Path) -> Path:
     with tempfile.TemporaryDirectory(prefix="loprofile_") as profile_dir:
         profile_uri = Path(profile_dir).as_uri()
         try:
-            result = subprocess.run(
+            # Ejecutable localizado y argv sin shell.
+            result = subprocess.run(  # nosec B603
                 [
                     soffice,
                     "--headless",
@@ -221,6 +235,7 @@ def _convert_with_libreoffice(docx_path: Path, out_dir: Path) -> Path:
                 capture_output=True,
                 text=True,
                 timeout=90,
+                check=False,
             )
         except subprocess.TimeoutExpired as e:
             raise PdfToolsError(
@@ -253,11 +268,13 @@ def rasterize(pdf_path: Path, out_dir: Path, dpi: int = 100) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     prefix = out_dir / pdf_path.stem
     try:
-        result = subprocess.run(
+        # pdftoppm localizado y argv sin shell.
+        result = subprocess.run(  # nosec B603
             [pdftoppm, "-jpeg", "-r", str(dpi), str(pdf_path), str(prefix)],
             capture_output=True,
             text=True,
             timeout=90,
+            check=False,
         )
     except subprocess.TimeoutExpired as e:
         raise PdfToolsError(f"pdftoppm tardó más de 90 segundos y se canceló. Detalle: {e}")

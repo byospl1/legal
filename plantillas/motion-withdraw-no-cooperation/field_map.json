@@ -28,6 +28,13 @@
     { "tipo": "DATE", "descripcion": "Campo de Word autoactualizable (DATE \\@ \"M/d/yyyy\"), Certificate of Service — reemplazó un texto suelto \"10/15/2025\" que parecía residuo de otro caso, ahora se auto-actualiza como el resto de las fechas de firma" }
   ],
   "tiene_tabla_exhibits": false,
+  "audiencia_layout": {
+    "juez_label": "Honorable Judge: ",
+    "audiencia_label": "Next Court Hearing: "
+  },
+  "layout_cleanup": {
+    "remove_empty_before_page_breaks": true
+  },
   "evidencia_exhibits": [
     { "letra": "B", "descripcion": "Proof of no contact / cartas de no contacto", "anchor_texto": "“EXHIBIT B”" },
     { "letra": "C", "descripcion": "Disengagement Letter", "anchor_texto": "“EXHIBIT C”" },

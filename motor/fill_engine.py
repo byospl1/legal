@@ -23,8 +23,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from defusedxml import minidom
+
 from motor.analyze_template import Sdt, extract_top_level_sdts
-from motor.exhibit_builder import build_dividers, build_exhibit_table
+from motor.exhibit_builder import CATEGORY_ORDER, build_dividers, build_exhibit_table
 from motor.ooxml_utils import (
     add_image_relationship,
     build_inline_image_run,
@@ -70,14 +72,21 @@ def _sanitize_output_name_part(text: str) -> str:
     PNG de firma en firmas/) porque esos archivos sí están guardados en
     disco con espacios en el nombre."""
     text = _sanitize_filename_part(text).replace(",", "")
-    return re.sub(r"\s+", "_", text.strip())
+    cleaned = re.sub(r"\s+", "_", text.strip())[:30].rstrip("._-")
+    return cleaned or "documento"
 
 
 def _tipo_tab_label(document_instance: dict) -> str:
     exhibits = document_instance.get("exhibits") or []
     if exhibits:
         letras = "-".join(tg["letra"] for tg in exhibits)
-        return f"Tab{letras}"
+        categorias_presentes = {
+            categoria
+            for tab_group in exhibits
+            for categoria in (tab_group.get("categorias") or [])
+        }
+        categorias = "_".join(c for c in CATEGORY_ORDER if c in categorias_presentes)
+        return f"Tab{letras}_{categorias}" if categorias else f"Tab{letras}"
     return document_instance["template_id"]
 
 
@@ -93,7 +102,7 @@ def _unique_output_path(output_dir: Path, base_name: str, suffix: str = ".docx")
 
 
 def _sdtpr_run_props(prefix_xml: str) -> str:
-    m = re.search(r"<w:sdtPr>.*?<w:rPr>(.*?)</w:rPr>", prefix_xml, re.S)
+    m = re.search(r"<w:sdtPr>.*?<w:rPr>(.*?)</w:rPr>", prefix_xml, re.DOTALL)
     return m.group(1) if m else ""
 
 
@@ -190,6 +199,180 @@ def _apply_field_values(document_xml: str, field_map: dict, values: dict[str, st
     return "".join(out)
 
 
+def _element_children(node, local_name: str | None = None):
+    return [
+        child
+        for child in node.childNodes
+        if child.nodeType == child.ELEMENT_NODE and (local_name is None or child.localName == local_name)
+    ]
+
+
+def _descendants(node, local_name: str):
+    return [element for element in node.getElementsByTagNameNS("*", local_name)]
+
+
+def _paragraph_text(paragraph) -> str:
+    return "".join(
+        child.firstChild.data if child.firstChild else ""
+        for child in _descendants(paragraph, "t")
+    )
+
+
+def _paragraph_is_empty(paragraph) -> bool:
+    if _paragraph_text(paragraph).strip():
+        return False
+    forbidden = {"drawing", "object", "pict", "br", "sectPr"}
+    return not any(element.localName in forbidden for element in paragraph.getElementsByTagNameNS("*", "*"))
+
+
+def _paragraph_has_page_break_before(paragraph) -> bool:
+    return bool(_descendants(paragraph, "pageBreakBefore"))
+
+
+def _sdt_has_id(sdt, target_id: str) -> bool:
+    for element in _descendants(sdt, "id"):
+        value = element.getAttributeNS(
+            "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "val"
+        ) or element.getAttribute("w:val")
+        if value == target_id:
+            return True
+    return False
+
+
+def _field_ids(field_map: dict, field_name: str) -> list[str]:
+    ids: list[str] = []
+    for item in field_map.get("campos_simples", []):
+        if item.get("nombre") == field_name:
+            ids.append(str(item["w_id"]))
+    for item in field_map.get("campos_anidados", []):
+        if item.get("nombre") == field_name:
+            ids.append(str(item["w_id_interior"]))
+    for item in field_map.get("grupos_bookmark", []):
+        if item.get("nombre") == field_name:
+            ids.extend([str(item["maestro"]), *[str(value) for value in item.get("mirrors", [])]])
+    for item in field_map.get("grupos_sync_manual", []):
+        if item.get("nombre") == field_name:
+            ids.extend(str(value) for value in item.get("ids", []))
+    return ids
+
+
+def _new_run(dom, text: str, bold: bool = False):
+    run = dom.createElement("w:r")
+    props = dom.createElement("w:rPr")
+    fonts = dom.createElement("w:rFonts")
+    fonts.setAttribute("w:ascii", "Times New Roman")
+    fonts.setAttribute("w:hAnsi", "Times New Roman")
+    props.appendChild(fonts)
+    size = dom.createElement("w:sz")
+    size.setAttribute("w:val", "24")
+    props.appendChild(size)
+    if bold:
+        props.appendChild(dom.createElement("w:b"))
+    run.appendChild(props)
+    text_node = dom.createElement("w:t")
+    text_node.setAttribute("xml:space", "preserve")
+    text_node.appendChild(dom.createTextNode(text))
+    run.appendChild(text_node)
+    return run
+
+
+def _apply_audiencia_layout(document_xml: str, field_map: dict, values: dict[str, str]) -> str:
+    """Evita que juez + audiencia se recorten en el margen derecho."""
+    config = field_map.get("audiencia_layout")
+    if not config:
+        return document_xml
+    target_ids = set(_field_ids(field_map, "proxima_audiencia"))
+    if not target_ids:
+        raise FillEngineError("audiencia_layout está configurado, pero no existe proxima_audiencia")
+
+    dom = minidom.parseString(document_xml.encode("utf-8"))
+    target_paragraph = None
+    for paragraph in dom.getElementsByTagNameNS("*", "p"):
+        sdts = paragraph.getElementsByTagNameNS("*", "sdt")
+        if any(_sdt_has_id(sdt, target_id) for sdt in sdts for target_id in target_ids):
+            target_paragraph = paragraph
+            break
+    if target_paragraph is None:
+        raise FillEngineError("No se encontró el párrafo de próxima audiencia para ajustar su ancho")
+
+    ppr = next(iter(_element_children(target_paragraph, "pPr")), None)
+    for child in list(target_paragraph.childNodes):
+        if child is not ppr:
+            target_paragraph.removeChild(child)
+    if ppr is not None:
+        for child in list(ppr.childNodes):
+            if child.nodeType == child.ELEMENT_NODE and child.localName in {"tabs", "jc", "ind"}:
+                ppr.removeChild(child)
+        # Algunas plantillas heredan alineación centrada desde el estilo de
+        # párrafo. Declararla explícitamente evita que cada línea del bloque
+        # (juez y próxima audiencia) se centre de forma independiente.
+        alignment = dom.createElement("w:jc")
+        alignment.setAttribute("w:val", "left")
+        ppr.appendChild(alignment)
+        indentation = dom.createElement("w:ind")
+        indentation.setAttribute("w:left", "0")
+        indentation.setAttribute("w:firstLine", "0")
+        ppr.appendChild(indentation)
+
+    target_paragraph.appendChild(_new_run(dom, config.get("juez_label", "Honorable Judge: "), True))
+    target_paragraph.appendChild(_new_run(dom, values.get("juez", "")))
+    break_run = dom.createElement("w:r")
+    break_run.appendChild(dom.createElement("w:br"))
+    target_paragraph.appendChild(break_run)
+    target_paragraph.appendChild(_new_run(dom, config.get("audiencia_label", "Next Court Hearing: "), True))
+    target_paragraph.appendChild(_new_run(dom, values.get("proxima_audiencia", "")))
+    return dom.toxml(encoding="utf-8").decode("utf-8")
+
+
+def _apply_layout_cleanup(document_xml: str, field_map: dict) -> str:
+    """Retira relleno vacío que puede crear páginas completamente blancas."""
+    config = field_map.get("layout_cleanup")
+    if not config:
+        return document_xml
+    dom = minidom.parseString(document_xml.encode("utf-8"))
+    bodies = dom.getElementsByTagNameNS("*", "body")
+    if not bodies:
+        return document_xml
+    body = bodies[0]
+
+    def direct_paragraphs():
+        return _element_children(body, "p")
+
+    if config.get("remove_empty_before_page_breaks"):
+        for paragraph in list(direct_paragraphs()):
+            if not _paragraph_has_page_break_before(paragraph):
+                continue
+            previous = paragraph.previousSibling
+            while previous is not None:
+                candidate = previous
+                previous = previous.previousSibling
+                if candidate.nodeType != candidate.ELEMENT_NODE:
+                    continue
+                if candidate.localName != "p" or not _paragraph_is_empty(candidate):
+                    break
+                body.removeChild(candidate)
+
+    for marker, keep_value in (config.get("empty_before_markers") or {}).items():
+        keep = max(0, int(keep_value))
+        for paragraph in list(direct_paragraphs()):
+            if marker not in _paragraph_text(paragraph):
+                continue
+            empty: list = []
+            previous = paragraph.previousSibling
+            while previous is not None:
+                candidate = previous
+                previous = previous.previousSibling
+                if candidate.nodeType != candidate.ELEMENT_NODE:
+                    continue
+                if candidate.localName != "p" or not _paragraph_is_empty(candidate):
+                    break
+                empty.append(candidate)
+            for candidate in empty[keep:]:
+                body.removeChild(candidate)
+
+    return dom.toxml(encoding="utf-8").decode("utf-8")
+
+
 def _firma_lookup_nombre(categoria: str, nombre_field: str | None, values: dict) -> str | None:
     """Nombre de archivo (sin extensión) bajo el que debe estar guardada la
     firma de esta persona en firmas/{categoria}/ — ver _apply_firmas_imagen.
@@ -284,7 +467,7 @@ def _locate_tbl_by_markers(document_xml: str, markers: list[str]) -> tuple[int, 
 
 
 def _locate_divider_block(document_xml: str) -> tuple[int, int]:
-    m = re.search(r'<w:p [^>]*>(?:(?!</w:p>).)*?>[^<]*EXHIBIT [A-Za-z][^<]*<(?:(?!</w:p>).)*?</w:p>', document_xml, re.S)
+    m = re.search(r'<w:p [^>]*>(?:(?!</w:p>).)*?>[^<]*EXHIBIT [A-Za-z][^<]*<(?:(?!</w:p>).)*?</w:p>', document_xml, re.DOTALL)
     if not m:
         raise FillEngineError("No se encontró la página divisoria 'EXHIBIT X' original en la plantilla")
     title_start, title_end = m.start(), m.end()
@@ -749,6 +932,7 @@ def generar_documento(
 
         document_xml = doc_path.read_text(encoding="utf-8")
         document_xml = _apply_field_values(document_xml, field_map, values)
+        document_xml = _apply_audiencia_layout(document_xml, field_map, values)
 
         if field_map.get("tiene_tabla_exhibits") and document_instance.get("exhibits"):
             document_xml = _apply_exhibits(document_xml, document_instance["exhibits"], plural=tiene_riders)
@@ -762,6 +946,8 @@ def generar_documento(
         # (o casos sin riders) no cambian nada.
         if tiene_riders:
             document_xml = _apply_plural_riders(document_xml, field_map)
+
+        document_xml = _apply_layout_cleanup(document_xml, field_map)
 
         doc_path.write_text(document_xml, encoding="utf-8")
 

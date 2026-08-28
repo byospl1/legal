@@ -9,15 +9,28 @@ Uso:
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import traceback
 import uuid
+from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 
-from motor.case_store import CASE_STORE_DIR, list_cases, load_case, next_tab_letra, save_case, siguiente_pagina
+from motor.case_store import (
+    CASE_STORE_DIR,
+    delete_case,
+    list_cases,
+    load_case,
+    next_tab_letra,
+    save_case,
+    siguiente_pagina,
+    validate_case_id,
+)
 from motor.exhibit_builder import (
     CATEGORY_ORDER,
     ITEMS_POR_CATEGORIA,
@@ -54,8 +67,41 @@ EVIDENCIA_DIR.mkdir(parents=True, exist_ok=True)
 # disco (EVIDENCIA_DIR) para no perderlos, pero el número de páginas se
 # recalcula si hace falta.
 _EVIDENCIAS: dict[str, dict] = {}
+_EVIDENCIA_MAX_AGE_SECONDS = 24 * 60 * 60
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
+try:
+    _MAX_UPLOAD_MB = max(1, min(int(os.environ.get("EOIR_MAX_UPLOAD_MB", "50")), 500))
+except ValueError:
+    _MAX_UPLOAD_MB = 50
+app.config["MAX_CONTENT_LENGTH"] = _MAX_UPLOAD_MB * 1024 * 1024
+app.config["MAX_FORM_MEMORY_SIZE"] = 2 * 1024 * 1024
+
+
+@app.before_request
+def _proteccion_solicitudes_locales():
+    """Bloquea POST/DELETE enviados desde sitios externos al navegador local."""
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.headers.get("X-EOIR-Request") != "1":
+        return jsonify({"error": "Solicitud local no autorizada"}), 403
+
+
+@app.after_request
+def _cabeceras_privacidad(response):
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    )
+    return response
+
+
+@app.errorhandler(413)
+def _archivo_demasiado_grande(_error):
+    return jsonify({"error": f"El archivo excede el límite de {_MAX_UPLOAD_MB} MB"}), 413
 
 
 def _catalogos() -> dict:
@@ -92,6 +138,145 @@ def _registro_plantillas() -> dict:
     return registro
 
 
+def _plantillas_por_id() -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for entry in _registro_plantillas()["plantillas"]:
+        for item in entry.get("variantes") or [entry]:
+            template_id = item.get("template_id")
+            if template_id:
+                out[template_id] = item
+    return out
+
+
+def _texto(value, nombre: str, *, requerido: bool = False, max_len: int = 500) -> str:
+    if value is None:
+        value = ""
+    if not isinstance(value, str):
+        raise ValueError(f"'{nombre}' debe ser texto")  # noqa: TRY004 -- error de validación HTTP
+    value = value.strip()
+    if requerido and not value:
+        raise ValueError(f"Falta el campo requerido '{nombre}'")
+    if len(value) > max_len:
+        raise ValueError(f"'{nombre}' excede el máximo de {max_len} caracteres")
+    return value
+
+
+def _validar_caso_payload(case: dict) -> dict:
+    permitidos = {
+        "id", "cliente_nombre", "a_number", "corte_sede", "juez", "proxima_audiencia",
+        "abogado", "preparador", "riders", "ultimo_tab_letra", "siguiente_pagina",
+    }
+    case = {k: v for k, v in case.items() if k in permitidos}
+    if case.get("id") is not None:
+        validate_case_id(case["id"])
+
+    for campo in ("cliente_nombre", "a_number", "corte_sede", "juez", "proxima_audiencia", "abogado", "preparador"):
+        case[campo] = _texto(case.get(campo), campo, requerido=True, max_len=300)
+
+    digitos = re.sub(r"\D", "", case["a_number"])
+    if len(digitos) not in (8, 9):
+        raise ValueError("El A# debe contener 8 o 9 dígitos")
+
+    riders = case.get("riders") or []
+    if not isinstance(riders, list) or len(riders) > 20:
+        raise ValueError("'riders' debe ser una lista de hasta 20 personas")
+    riders_limpios = []
+    for i, rider in enumerate(riders, 1):
+        if not isinstance(rider, dict):
+            raise ValueError(f"El rider {i} no tiene una estructura válida")  # noqa: TRY004
+        nombre = _texto(rider.get("nombre"), f"nombre del rider {i}", requerido=True, max_len=200)
+        a_number = _texto(rider.get("a_number"), f"A# del rider {i}", requerido=True, max_len=30)
+        if len(re.sub(r"\D", "", a_number)) not in (8, 9):
+            raise ValueError(f"El A# del rider {i} debe contener 8 o 9 dígitos")
+        riders_limpios.append({"nombre": nombre, "a_number": a_number})
+    case["riders"] = riders_limpios
+
+    if case.get("ultimo_tab_letra") is not None:
+        ultima = _texto(case["ultimo_tab_letra"], "ultimo_tab_letra", max_len=6).upper()
+        if ultima and not re.fullmatch(r"[A-Z]+", ultima):
+            raise ValueError("'ultimo_tab_letra' no es válida")
+        case["ultimo_tab_letra"] = ultima
+    try:
+        case["siguiente_pagina"] = max(1, int(case.get("siguiente_pagina") or 1))
+    except (TypeError, ValueError):
+        raise ValueError("'siguiente_pagina' debe ser un entero positivo")
+    return case
+
+
+def _validar_document_instance(instance: object) -> tuple[dict, dict]:
+    if not isinstance(instance, dict):
+        raise ValueError("'document_instance' debe ser un objeto JSON")  # noqa: TRY004
+    template_id = _texto(instance.get("template_id"), "template_id", requerido=True, max_len=100)
+    plantilla = _plantillas_por_id().get(template_id)
+    if plantilla is None:
+        raise ValueError("La plantilla solicitada no está registrada")
+
+    limpio = dict(instance)
+    limpio["template_id"] = template_id
+    for campo in plantilla.get("campos_extra") or []:
+        nombre = campo["nombre"]
+        tipo = campo.get("tipo", "texto")
+        if tipo == "booleano":
+            value = limpio.get(nombre)
+            if not isinstance(value, bool):
+                raise ValueError(f"'{nombre}' debe ser verdadero o falso")
+        else:
+            limpio[nombre] = _texto(
+                limpio.get(nombre), nombre, requerido=not campo.get("opcional", False), max_len=500
+            )
+    if template_id == "eoir-33-change-address":
+        if limpio.get("servicio_ecas") is False and not limpio.get("direccion_servicio_1"):
+            raise ValueError("La dirección de servicio a OPLA/ICE es requerida cuando no se presenta mediante ECAS")
+        for email_field in ("email_anterior", "email_actual"):
+            email = limpio.get(email_field)
+            if email and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+                raise ValueError(f"'{email_field}' no parece un correo electrónico válido")
+
+    exhibits = limpio.get("exhibits") or []
+    if not isinstance(exhibits, list) or len(exhibits) > 100:
+        raise ValueError("'exhibits' debe ser una lista de hasta 100 Tabs")
+    letras = set()
+    for i, tg in enumerate(exhibits, 1):
+        if not isinstance(tg, dict):
+            raise ValueError(f"El Tab {i} no tiene una estructura válida")  # noqa: TRY004
+        letra = _texto(tg.get("letra"), f"letra del Tab {i}", requerido=True, max_len=6).upper()
+        if not re.fullmatch(r"[A-Z]+", letra) or letra in letras:
+            raise ValueError(f"La letra del Tab {i} no es válida o está repetida")
+        letras.add(letra)
+        tg["letra"] = letra
+        categorias = tg.get("categorias") or []
+        if not isinstance(categorias, list) or not categorias or any(c not in CATEGORY_ORDER for c in categorias):
+            raise ValueError(f"Las categorías del Tab {letra} no son válidas")
+        paginas = _texto(tg.get("paginas"), f"páginas del Tab {letra}", requerido=True, max_len=30)
+        if not re.fullmatch(r"\d+(?:-\d+)?", paginas):
+            raise ValueError(f"El rango de páginas del Tab {letra} no es válido")
+
+        evidencias = tg.get("evidencias") or {}
+        if not isinstance(evidencias, dict):
+            raise ValueError(f"Las evidencias del Tab {letra} no son válidas")  # noqa: TRY004
+        for evidencia_id in evidencias.values():
+            if evidencia_id and not re.fullmatch(r"[0-9a-f]{32}", str(evidencia_id)):
+                raise ValueError(f"Una evidencia del Tab {letra} tiene un identificador no válido")
+        for lista_nombre in ("identidades", "documentos_se", "biometricos", "declaraciones"):
+            items = tg.get(lista_nombre) or []
+            if not isinstance(items, list) or len(items) > 100 or any(not isinstance(item, dict) for item in items):
+                raise ValueError(f"'{lista_nombre}' del Tab {letra} no es una lista válida")
+            for item in items:
+                evidencia_id = item.get("evidencia_id")
+                if evidencia_id and not re.fullmatch(r"[0-9a-f]{32}", str(evidencia_id)):
+                    raise ValueError(f"Una evidencia de '{lista_nombre}' en el Tab {letra} no es válida")
+
+    motion_evidence = limpio.get("exhibits_evidencia") or {}
+    if not isinstance(motion_evidence, dict):
+        raise ValueError("'exhibits_evidencia' debe ser un objeto")  # noqa: TRY004
+    for letra, ids in motion_evidence.items():
+        if not re.fullmatch(r"[A-Z]+", str(letra).upper()) or not isinstance(ids, list) or len(ids) > 100:
+            raise ValueError("La evidencia de una Motion tiene una estructura no válida")
+        if any(not re.fullmatch(r"[0-9a-f]{32}", str(eid)) for eid in ids):
+            raise ValueError("Una evidencia de Motion tiene un identificador no válido")
+    return limpio, plantilla
+
+
 def _list_salidas() -> list[dict]:
     salidas = []
     pdfs_con_docx = set()
@@ -104,6 +289,7 @@ def _list_salidas() -> list[dict]:
             {
                 "docx": docx_path.name,
                 "pdf": pdf_path.name if pdf_path.exists() else None,
+                "id": docx_path.stem,
                 "previews": previews,
                 "preview_dir": docx_path.stem,
                 "mtime": docx_path.stat().st_mtime,
@@ -120,6 +306,7 @@ def _list_salidas() -> list[dict]:
             {
                 "docx": None,
                 "pdf": pdf_path.name,
+                "id": pdf_path.stem,
                 "previews": previews,
                 "preview_dir": pdf_path.stem,
                 "mtime": pdf_path.stat().st_mtime,
@@ -159,7 +346,10 @@ def api_init():
 
 @app.get("/api/casos/<case_id>")
 def api_get_caso(case_id: str):
-    case = load_case(case_id)
+    try:
+        case = load_case(case_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     if case is None:
         return jsonify({"error": "Caso no encontrado"}), 404
     return jsonify(case)
@@ -170,31 +360,46 @@ def api_save_caso():
     case = request.get_json(force=True, silent=True)
     if not isinstance(case, dict):
         return jsonify({"error": "El cuerpo de la petición no es JSON válido"}), 400
-    required = ["cliente_nombre", "a_number", "corte_sede", "juez", "proxima_audiencia", "abogado", "preparador"]
-    faltantes = [campo for campo in required if not case.get(campo)]
-    if faltantes:
-        return jsonify({"error": f"Faltan campos requeridos: {', '.join(faltantes)}"}), 400
-    if len(re.sub(r"\D", "", case["a_number"])) < 8:
-        return jsonify({"error": "El A# no parece válido (debe traer al menos 8 dígitos, ej. A 248-003-356)"}), 400
-    saved = save_case(case)
+    try:
+        saved = save_case(_validar_caso_payload(case))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     return jsonify(saved)
+
+
+@app.delete("/api/casos/<case_id>")
+def api_delete_caso(case_id: str):
+    try:
+        removed = delete_case(case_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    if not removed:
+        return jsonify({"error": "Caso no encontrado"}), 404
+    return jsonify({"ok": True})
 
 
 @app.get("/api/casos/<case_id>/siguiente-letra")
 def api_siguiente_letra(case_id: str):
-    case = load_case(case_id)
+    try:
+        case = load_case(case_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     ultimo = case.get("ultimo_tab_letra") if case else None
     return jsonify({"siguiente_letra": next_tab_letra(ultimo)})
 
 
 @app.get("/api/casos/<case_id>/siguiente-pagina")
 def api_siguiente_pagina(case_id: str):
-    case = load_case(case_id)
+    try:
+        case = load_case(case_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     return jsonify({"siguiente_pagina": siguiente_pagina(case) if case else 1})
 
 
 @app.post("/api/evidencia")
 def api_subir_evidencia():
+    _limpiar_evidencia_antigua()
     archivo = request.files.get("file")
     if archivo is None or not archivo.filename:
         return jsonify({"error": "No se recibió ningún archivo"}), 400
@@ -216,8 +421,16 @@ def api_subir_evidencia():
     except PdfMergeError as e:
         destino.unlink(missing_ok=True)
         return jsonify({"error": str(e)}), 400
+    if num_paginas < 1 or num_paginas > 2000:
+        destino.unlink(missing_ok=True)
+        return jsonify({"error": "El PDF debe contener entre 1 y 2000 páginas"}), 400
 
-    _EVIDENCIAS[evidencia_id] = {"path": destino, "num_paginas": num_paginas, "nombre": archivo.filename}
+    _EVIDENCIAS[evidencia_id] = {
+        "path": destino,
+        "num_paginas": num_paginas,
+        "nombre": archivo.filename,
+        "created_at": datetime.now(timezone.utc).timestamp(),
+    }
 
     respuesta = {"evidencia_id": evidencia_id, "num_paginas": num_paginas, "nombre": archivo.filename}
     if tipo in ("country_reports", "osac"):
@@ -408,6 +621,7 @@ def _es_plantilla_pdf_form(template_id: str | None) -> bool:
 
 @app.post("/api/generar")
 def api_generar():
+    _limpiar_evidencia_antigua()
     body = request.get_json(force=True, silent=True)
     if not isinstance(body, dict):
         return jsonify({"error": "El cuerpo de la petición no es JSON válido"}), 400
@@ -416,12 +630,29 @@ def api_generar():
     separar_por_tab = body.get("separar_por_tab", True)
     generar_pdf = body.get("generar_pdf", False)
     pagina_inicial_lote = body.get("pagina_inicial_lote")
-    if not case_id or not document_instance:
+    if not case_id or document_instance is None:
         return jsonify({"error": "Se requiere case_id y document_instance"}), 400
+    if not isinstance(separar_por_tab, bool) or not isinstance(generar_pdf, bool):
+        return jsonify({"error": "'separar_por_tab' y 'generar_pdf' deben ser booleanos"}), 400
+    if pagina_inicial_lote is not None and (
+        not isinstance(pagina_inicial_lote, int) or isinstance(pagina_inicial_lote, bool) or pagina_inicial_lote < 1
+    ):
+        return jsonify({"error": "'pagina_inicial_lote' debe ser un entero positivo"}), 400
 
-    case = load_case(case_id)
+    try:
+        validate_case_id(case_id)
+        document_instance, _plantilla = _validar_document_instance(document_instance)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    try:
+        case = load_case(case_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     if case is None:
         return jsonify({"error": "Caso no encontrado"}), 404
+    case_original = deepcopy(case)
+    case = deepcopy(case)
 
     if _es_plantilla_pdf_form(document_instance.get("template_id")):
         from motor.pdf_form_fill import PdfFormFillError, generar_pdf_formulario
@@ -503,15 +734,12 @@ def api_generar():
         traceback.print_exc()
         return jsonify({"error": f"Error inesperado generando el documento: {e}"}), 500
 
-    if exhibits:
-        case["ultimo_tab_letra"] = exhibits[-1]["letra"]
-        save_case(case)
-
     # resultados[i] corresponde a exhibits[i] cuando separar_por_tab generó
     # un archivo por Tab (que es obligatorio si hay evidencia, ver arriba).
     tabs_por_resultado = exhibits if (separar_por_tab and len(resultados) == len(exhibits)) else [None] * len(resultados)
 
     documentos = []
+    evidencia_ok = True
     for result, tab_group in zip(resultados, tabs_por_resultado):
         preview_urls = [f"/output/_preview/{result.docx_path.stem}/{p.name}" for p in result.preview_images]
         entry = {
@@ -542,7 +770,12 @@ def api_generar():
         docs_con_pagina += [
             (d["evidencia"]["pagina_inicio"], d["evidencia"]["path"]) for d in declaraciones_resueltas if d.get("evidencia")
         ]
-        if docs_con_pagina and result.pdf_path:
+        if docs_con_pagina and not result.pdf_path:
+            entry["evidencia_error"] = (
+                "No se generó el PDF de portada; la evidencia no se fusionó y la paginación del caso no avanzó."
+            )
+            evidencia_ok = False
+        elif docs_con_pagina and result.pdf_path:
             docs_con_pagina.sort(key=lambda x: x[0])
             rutas = [ruta for _, ruta in docs_con_pagina]
             pagina_inicial_tab = docs_con_pagina[0][0]
@@ -557,8 +790,10 @@ def api_generar():
                         "quedó insertada al final del documento en vez de después de la divisoria. "
                         "Revísalo antes de usarlo."
                     )
+                    evidencia_ok = False
             except PdfMergeError as e:
                 entry["evidencia_error"] = str(e)
+                evidencia_ok = False
 
         if exhibits_evidencia_ids and result.pdf_path:
             pagina_inicial_exhibits = document_instance.get("pagina_inicial_exhibits")
@@ -575,12 +810,28 @@ def api_generar():
                         "No se encontró la página divisoria de estos Exhibits en el PDF generado, así que su "
                         f"evidencia no se pudo insertar: {', '.join(no_encontradas)}. Revísalo antes de usarlo."
                     )
+                    evidencia_ok = False
             except PdfMergeError as e:
                 entry["evidencia_error"] = str(e)
+                evidencia_ok = False
 
         documentos.append(entry)
 
-    return jsonify({"documentos": documentos, "siguiente_pagina": case.get("siguiente_pagina", 1)})
+    hay_cualquier_evidencia = tiene_evidencia or bool(exhibits_evidencia_ids)
+    debe_guardar_estado = not hay_cualquier_evidencia or evidencia_ok
+    if debe_guardar_estado:
+        if exhibits:
+            case["ultimo_tab_letra"] = exhibits[-1]["letra"]
+        if exhibits or tiene_evidencia:
+            save_case(case)
+        siguiente = case.get("siguiente_pagina", 1)
+    else:
+        siguiente = case_original.get("siguiente_pagina", 1)
+    return jsonify({
+        "documentos": documentos,
+        "siguiente_pagina": siguiente,
+        "estado_caso_guardado": debe_guardar_estado,
+    })
 
 
 @app.get("/output/<path:filename>")
@@ -589,6 +840,26 @@ def descargar_output(filename: str):
     if not target.is_relative_to(OUTPUT_DIR.resolve()) or not target.is_file():
         return jsonify({"error": "Archivo no encontrado"}), 404
     return send_file(target)
+
+
+@app.delete("/api/salidas/<salida_id>")
+def eliminar_salida(salida_id: str):
+    if salida_id in {".", ".."} or not re.fullmatch(r"[\w().-]{1,240}", salida_id, re.UNICODE):
+        return jsonify({"error": "Identificador de salida no válido"}), 400
+    removed = False
+    for suffix in (".docx", ".pdf"):
+        target = (OUTPUT_DIR / f"{salida_id}{suffix}").resolve()
+        if target.is_relative_to(OUTPUT_DIR.resolve()) and target.is_file():
+            target.unlink()
+            removed = True
+    preview = (OUTPUT_DIR / "_preview" / salida_id).resolve()
+    preview_root = (OUTPUT_DIR / "_preview").resolve()
+    if preview.is_relative_to(preview_root) and preview.is_dir():
+        shutil.rmtree(preview)
+        removed = True
+    if not removed:
+        return jsonify({"error": "Salida no encontrada"}), 404
+    return jsonify({"ok": True})
 
 
 def _limpiar_evidencia_huerfana() -> None:
@@ -607,6 +878,22 @@ def _limpiar_evidencia_huerfana() -> None:
                 f.unlink()
             except OSError:
                 pass
+
+
+def _limpiar_evidencia_antigua(max_age_seconds: int = _EVIDENCIA_MAX_AGE_SECONDS) -> None:
+    """Limita la acumulación durante sesiones largas sin tocar entregables finales."""
+    cutoff = datetime.now(timezone.utc).timestamp() - max_age_seconds
+    for evidencia_id, info in list(_EVIDENCIAS.items()):
+        if info.get("created_at", 0) < cutoff:
+            Path(info["path"]).unlink(missing_ok=True)
+            _EVIDENCIAS.pop(evidencia_id, None)
+    if EVIDENCIA_DIR.exists():
+        for path in EVIDENCIA_DIR.glob("*"):
+            try:
+                if path.is_file() and path.stat().st_mtime < cutoff:
+                    path.unlink()
+            except OSError:
+                continue
 
 
 if __name__ == "__main__":

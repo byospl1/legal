@@ -1,18 +1,22 @@
 let CATALOGOS = null;
 let PLANTILLAS = [];
 let ITEMS_POR_CATEGORIA = {};
+let CASES = [];
 let TIPOS_DOCUMENTO_IDENTIDAD = ["Passport", "Birth Certificate", "ID"];
 let TIPOS_SUPPLEMENTAL_EVIDENCE = ["Declaration", "Psychological Report", "News"];
 let TIPOS_DOCUMENTO_PERSONA_SE = ["Declaration", "Psychological Report", "News"];
 let CURRENT_CASE_ID = null;
 let CURRENT_CASE_RIDERS = [];
 let tabCounter = 0;
+let CASE_LOAD_VERSION = 0;
 
 const CATEGORIA_ORDEN = ["i589_application", "country_conditions", "form_of_identity", "supplemental_evidence", "fee"];
 
 const $ = (sel) => document.querySelector(sel);
 
 async function api(path, options) {
+  options = options || {};
+  options.headers = { ...(options.headers || {}), "X-EOIR-Request": "1" };
   const res = await fetch(path, options);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
@@ -33,6 +37,73 @@ function fillSelect(id, values, placeholder) {
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function normalizarBusqueda(value) {
+  return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+function etiquetaCaso(caso) {
+  return `${caso.cliente_nombre || ""} — ${caso.a_number || ""}`;
+}
+
+function casosQueCoinciden(query) {
+  const texto = normalizarBusqueda(query).trim();
+  if (!texto) return CASES.slice(0, 8);
+  const digitos = texto.replace(/\D/g, "");
+  return CASES.filter((caso) => {
+    const nombre = normalizarBusqueda(caso.cliente_nombre);
+    const aNumber = normalizarBusqueda(caso.a_number);
+    return nombre.includes(texto) || aNumber.includes(texto) || (digitos && aNumber.replace(/\D/g, "").includes(digitos));
+  }).slice(0, 8);
+}
+
+function ocultarSugerenciasCaso() {
+  const lista = $("#casoSugerencias");
+  lista.hidden = true;
+  $("#buscarCaso").setAttribute("aria-expanded", "false");
+}
+
+function mostrarSugerenciasCaso() {
+  const input = $("#buscarCaso");
+  const lista = $("#casoSugerencias");
+  const coincidencias = casosQueCoinciden(input.value);
+  lista.innerHTML = "";
+  for (const caso of coincidencias) {
+    const opcion = document.createElement("button");
+    opcion.type = "button";
+    opcion.className = "case-suggestion";
+    opcion.setAttribute("role", "option");
+    opcion.dataset.caseId = caso.id;
+    opcion.innerHTML = `${escapeHtml(caso.cliente_nombre)}<br><span class="case-a-number">${escapeHtml(caso.a_number)}</span>`;
+    opcion.addEventListener("mousedown", (event) => event.preventDefault());
+    opcion.addEventListener("click", async () => {
+      input.value = etiquetaCaso(caso);
+      ocultarSugerenciasCaso();
+      await loadCase(caso.id);
+    });
+    lista.appendChild(opcion);
+  }
+  lista.hidden = coincidencias.length === 0;
+  input.setAttribute("aria-expanded", String(coincidencias.length > 0));
+}
+
+function configurarBusquedaCasos() {
+  const input = $("#buscarCaso");
+  input.addEventListener("input", mostrarSugerenciasCaso);
+  input.addEventListener("focus", mostrarSugerenciasCaso);
+  input.addEventListener("blur", () => setTimeout(ocultarSugerenciasCaso, 150));
+  input.addEventListener("keydown", async (event) => {
+    const opciones = [...document.querySelectorAll("#casoSugerencias .case-suggestion")];
+    const activa = document.activeElement;
+    const indice = opciones.indexOf(activa);
+    if (event.key === "ArrowDown" && opciones.length) {
+      event.preventDefault();
+      opciones[Math.min(indice + 1, opciones.length - 1)].focus();
+    } else if (event.key === "Escape") {
+      ocultarSugerenciasCaso();
+    }
+  });
 }
 
 /** Formatea un A# insertando "-" cada 3 dígitos (ej. "333999888" ->
@@ -62,7 +133,16 @@ function formatProximaAudiencia(raw) {
   const [, mesNum, diaNum, anio, hora, min, ampm, resto] = m;
   const mesIdx = parseInt(mesNum, 10) - 1;
   const dia = parseInt(diaNum, 10);
-  if (mesIdx < 0 || mesIdx > 11 || !dia || dia > 31) return raw;
+  const anioNum = parseInt(anio, 10);
+  const fecha = new Date(Date.UTC(anioNum, mesIdx, dia));
+  if (
+    mesIdx < 0 || mesIdx > 11 || !dia ||
+    fecha.getUTCFullYear() !== anioNum || fecha.getUTCMonth() !== mesIdx || fecha.getUTCDate() !== dia
+  ) return raw;
+  if (hora) {
+    const horaNum = parseInt(hora, 10);
+    if (parseInt(min, 10) > 59 || (ampm ? horaNum < 1 || horaNum > 12 : horaNum > 23)) return raw;
+  }
   let salida = `${MESES_EN[mesIdx]} ${dia}, ${anio}`;
   if (hora) salida += ` at ${parseInt(hora, 10)}:${min}${ampm ? " " + ampm.toUpperCase() : ""}`;
   if (resto.trim()) salida += `, ${resto.trim()}`;
@@ -118,14 +198,11 @@ async function init() {
   fillSelect("abogado", CATALOGOS.abogado, "— elegir —");
 
   $("#plantilla").innerHTML = PLANTILLAS.map(
-    (p) => `<option value="${p.template_id || p.grupo_id}">${escapeHtml(p.nombre)}</option>`
+    (p) => `<option value="${escapeHtml(p.template_id || p.grupo_id)}">${escapeHtml(p.nombre)}</option>`
   ).join("");
   onPlantillaChange();
 
-  const selCaso = $("#selCaso");
-  selCaso.innerHTML =
-    `<option value="">— Nuevo caso —</option>` +
-    data.casos.map((c) => `<option value="${c.id}">${escapeHtml(c.cliente_nombre)} — ${escapeHtml(c.a_number)}</option>`).join("");
+  CASES = data.casos || [];
 
   renderSalidas(data.salidas);
 }
@@ -137,28 +214,55 @@ function renderSalidas(salidas) {
   for (const s of salidas) {
     const tr = document.createElement("tr");
     const previewLinks = s.previews
-      .map((p, i) => `<a href="/output/_preview/${s.preview_dir}/${p}" target="_blank">pág. ${i + 1}</a>`)
+      .map((p, i) => `<a href="/output/_preview/${encodeURIComponent(s.preview_dir)}/${encodeURIComponent(p)}" target="_blank">pág. ${i + 1}</a>`)
       .join(" · ");
     tr.innerHTML = `
-      <td>${s.docx ? `<a href="/output/${s.docx}" download>${s.docx}</a>` : '<span class="muted">—</span>'}</td>
-      <td>${s.pdf ? `<a href="/output/${s.pdf}" download>${s.pdf}</a>` : '<span class="muted">no generado</span>'}</td>
+      <td>${s.docx ? `<a href="/output/${encodeURIComponent(s.docx)}" download>${escapeHtml(s.docx)}</a>` : '<span class="muted">—</span>'}</td>
+      <td>${s.pdf ? `<a href="/output/${encodeURIComponent(s.pdf)}" download>${escapeHtml(s.pdf)}</a>` : '<span class="muted">no generado</span>'}</td>
       <td>${previewLinks || '<span class="muted">—</span>'}</td>
+      <td><button type="button" class="danger salida-delete">Eliminar</button></td>
     `;
+    tr.querySelector(".salida-delete").addEventListener("click", async () => {
+      if (!confirm("¿Eliminar el DOCX, PDF y vistas previas de esta salida?")) return;
+      await api(`/api/salidas/${encodeURIComponent(s.id)}`, { method: "DELETE" });
+      tr.remove();
+    });
     tbody.appendChild(tr);
   }
 }
 
 function clearCaseForm() {
+  CASE_LOAD_VERSION += 1;
   CURRENT_CASE_ID = null;
   CURRENT_CASE_RIDERS = [];
   for (const id of ["cliente_nombre", "a_number", "corte_sede", "juez", "proxima_audiencia", "preparador"]) {
     $("#" + id).value = "";
   }
   $("#abogado").value = "";
-  $("#selCaso").value = "";
+  $("#buscarCaso").value = "";
+  ocultarSugerenciasCaso();
   $("#casoStatus").textContent = "";
+  resetDocumentFormForCase();
   $("#panelDocumento").style.display = "none";
   $("#ridersList").innerHTML = "";
+  $("#btnEliminarCaso").disabled = true;
+}
+
+/** Restablece todo el estado transitorio de la sección 2 al cambiar de
+ * expediente. Los PDFs ya subidos no se borran: solo se desvinculan de la
+ * corrida anterior y quedan sujetos a su limpieza temporal habitual. */
+function resetDocumentFormForCase() {
+  tabCounter = 0;
+  $("#tabsList").innerHTML = "";
+  $("#resultado").innerHTML = "";
+  $("#paginaInicialLote").value = 1;
+  $("#motionExhibitsPaginaInicial").value = 1;
+  $("#separarPorTab").checked = true;
+  $("#generarPdf").checked = false;
+  $("#generarSpinner").style.display = "none";
+  $("#btnGenerar").disabled = false;
+  MOTION_EXHIBITS_EVIDENCIA = {};
+  onPlantillaChange();
 }
 
 function addRiderRow(rider) {
@@ -166,12 +270,26 @@ function addRiderRow(rider) {
   div.className = "row rider-row";
   div.style.marginTop = "6px";
   div.innerHTML = `
-    <input type="text" class="rider-nombre" placeholder="Nombre del rider" style="flex:2; padding:8px 10px; border:1px solid var(--border); border-radius:6px;" value="${escapeHtml(rider?.nombre || "")}">
-    <input type="text" class="rider-a-number" placeholder="A# del rider" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:6px;" value="${escapeHtml(rider?.a_number || "")}">
-    <button type="button" class="danger" onclick="this.closest('.rider-row').remove()">Quitar</button>
+    <input type="text" class="rider-nombre" maxlength="200" placeholder="Nombre del rider" style="flex:2; padding:8px 10px; border:1px solid var(--border); border-radius:6px;" value="${escapeHtml(rider?.nombre || "")}">
+    <input type="text" class="rider-a-number" maxlength="30" placeholder="A# del rider" style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:6px;" value="${escapeHtml(rider?.a_number || "")}">
+    <button type="button" class="danger rider-remove">Quitar</button>
   `;
   $("#ridersList").appendChild(div);
-  attachANumberFormatter(div.querySelector(".rider-a-number"));
+  const actualizarRidersEnTabs = () => {
+    CURRENT_CASE_RIDERS = collectRiders();
+    actualizarPersonasDeCasoEnTabs();
+  };
+  div.querySelector(".rider-remove").addEventListener("click", () => {
+    div.remove();
+    actualizarRidersEnTabs();
+  });
+  const nombreInput = div.querySelector(".rider-nombre");
+  const aNumberInput = div.querySelector(".rider-a-number");
+  attachANumberFormatter(aNumberInput);
+  for (const input of [nombreInput, aNumberInput]) {
+    input.addEventListener("change", actualizarRidersEnTabs);
+    input.addEventListener("blur", actualizarRidersEnTabs);
+  }
 }
 
 function collectRiders() {
@@ -188,8 +306,13 @@ async function loadCase(caseId) {
     clearCaseForm();
     return;
   }
+  const loadVersion = ++CASE_LOAD_VERSION;
+  resetDocumentFormForCase();
+  $("#panelDocumento").style.display = "none";
   const c = await api(`/api/casos/${caseId}`);
+  if (loadVersion !== CASE_LOAD_VERSION) return;
   CURRENT_CASE_ID = c.id;
+  $("#btnEliminarCaso").disabled = false;
   CURRENT_CASE_RIDERS = c.riders || [];
   $("#cliente_nombre").value = c.cliente_nombre || "";
   $("#a_number").value = c.a_number || "";
@@ -202,8 +325,6 @@ async function loadCase(caseId) {
   for (const rider of c.riders || []) addRiderRow(rider);
   $("#casoStatus").textContent = "Caso cargado.";
   $("#panelDocumento").style.display = "block";
-  tabCounter = 0;
-  $("#tabsList").innerHTML = "";
   try {
     const p = await api(`/api/casos/${caseId}/siguiente-pagina`);
     $("#paginaInicialLote").value = p.siguiente_pagina;
@@ -231,31 +352,48 @@ async function guardarCaso() {
   const status = $("#casoStatus");
   try {
     const caso = collectCaseForm();
+    const riderIncompleto = caso.riders.find((r) => !r.nombre || !r.a_number);
+    if (riderIncompleto) throw new Error("Cada rider debe incluir nombre y A#.");
+    const audienciaRaw = $("#proxima_audiencia").value.trim();
+    if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(audienciaRaw) && formatProximaAudiencia(audienciaRaw) === audienciaRaw) {
+      throw new Error("La fecha u hora de próxima audiencia no es válida.");
+    }
     const saved = await api("/api/casos", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(caso),
     });
     CURRENT_CASE_ID = saved.id;
+    $("#btnEliminarCaso").disabled = false;
     CURRENT_CASE_RIDERS = saved.riders || [];
-    for (const card of document.querySelectorAll("#tabsList .tab-card")) renderIdentidadesUploads(card);
+    actualizarPersonasDeCasoEnTabs();
     status.textContent = `Caso guardado (${saved.id}).`;
     status.className = "muted";
     $("#panelDocumento").style.display = "block";
     if ($("#tabsList").children.length === 0) await addTabRow();
 
-    const selCaso = $("#selCaso");
-    if (![...selCaso.options].some((o) => o.value === saved.id)) {
-      const opt = document.createElement("option");
-      opt.value = saved.id;
-      opt.textContent = `${saved.cliente_nombre} — ${saved.a_number}`;
-      selCaso.appendChild(opt);
-    }
-    selCaso.value = saved.id;
+    const resumen = { id: saved.id, cliente_nombre: saved.cliente_nombre, a_number: saved.a_number };
+    const indiceCaso = CASES.findIndex((c) => c.id === saved.id);
+    if (indiceCaso >= 0) CASES[indiceCaso] = resumen;
+    else CASES.push(resumen);
+    $("#buscarCaso").value = etiquetaCaso(saved);
   } catch (e) {
     status.textContent = "Error: " + e.message;
     status.className = "muted";
     status.style.color = "var(--err)";
+  }
+}
+
+async function eliminarCasoActual() {
+  if (!CURRENT_CASE_ID) return;
+  if (!confirm("¿Eliminar este caso y su respaldo local? Los documentos ya generados no se borrarán.")) return;
+  try {
+    await api(`/api/casos/${encodeURIComponent(CURRENT_CASE_ID)}`, { method: "DELETE" });
+    const data = await api("/api/init");
+    clearCaseForm();
+    CASES = data.casos || [];
+  } catch (e) {
+    $("#casoStatus").textContent = "Error: " + e.message;
   }
 }
 
@@ -320,11 +458,25 @@ function actualizarUIPlantillaEfectiva() {
   cont.style.display = camposExtra.length ? "grid" : "none";
   cont.innerHTML = camposExtra
     .map(
-      (c) => `
+      (c) => {
+        let control;
+        if (c.tipo === "booleano") {
+          control = `<select class="campo-extra" data-nombre="${escapeHtml(c.nombre)}" data-tipo="booleano">
+            <option value="">— elegir —</option>
+            <option value="true">Sí</option>
+            <option value="false">No</option>
+          </select>`;
+        } else if (c.tipo === "textarea") {
+          control = `<textarea class="campo-extra" data-nombre="${escapeHtml(c.nombre)}" rows="3" placeholder="${escapeHtml(c.placeholder || "")}"></textarea>`;
+        } else {
+          control = `<input type="text" class="campo-extra" data-nombre="${escapeHtml(c.nombre)}" placeholder="${escapeHtml(c.placeholder || "")}">`;
+        }
+        return `
     <div class="field">
-      <label>${escapeHtml(c.etiqueta)}</label>
-      <input type="text" class="campo-extra" data-nombre="${escapeHtml(c.nombre)}" placeholder="${escapeHtml(c.placeholder || "")}">
-    </div>`
+      <label>${escapeHtml(c.etiqueta)}${c.opcional ? " (opcional)" : ""}</label>
+      ${control}
+    </div>`;
+      }
     )
     .join("");
 
@@ -334,7 +486,11 @@ function actualizarUIPlantillaEfectiva() {
 function collectCamposExtra() {
   const out = {};
   for (const input of document.querySelectorAll("#camposExtraSection .campo-extra")) {
-    out[input.dataset.nombre] = input.value.trim();
+    if (input.dataset.tipo === "booleano") {
+      out[input.dataset.nombre] = input.value === "" ? null : input.value === "true";
+    } else {
+      out[input.dataset.nombre] = input.value.trim();
+    }
   }
   return out;
 }
@@ -395,7 +551,7 @@ async function onMotionExhibitUpload(input) {
     for (const file of files) {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch("/api/evidencia", { method: "POST", body: formData });
+      const res = await fetch("/api/evidencia", { method: "POST", headers: { "X-EOIR-Request": "1" }, body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Error al subir ${file.name}`);
       subidos.push({ evidencia_id: data.evidencia_id, num_paginas: data.num_paginas, nombre: data.nombre });
@@ -450,7 +606,7 @@ async function addTabRow() {
   div.innerHTML = `
     <div class="tab-head">
       <strong>Tab</strong>
-      <button type="button" class="danger" onclick="this.closest('.tab-card').remove(); recalcularPaginas();">Quitar</button>
+      <button type="button" class="danger quitar-tab">Quitar</button>
     </div>
     <div class="grid">
       <div class="field">
@@ -509,6 +665,10 @@ async function addTabRow() {
     <div class="documentos-se-tab" style="margin-top:10px;"></div>
   `;
   $("#tabsList").appendChild(div);
+  div.querySelector(".quitar-tab").addEventListener("click", () => {
+    div.remove();
+    recalcularPaginas();
+  });
   div._identidadesEvidencia = {}; // { personaKey: [{ id, tipo_doc, evidencia_id, num_paginas }, ...] } — más de un documento por persona
   div._identidadesCounter = 0;
   div._biometricosEvidencia = {};
@@ -547,10 +707,23 @@ async function addTabRow() {
 }
 
 function personasDelCaso() {
+  // Tomar el formulario como fuente de verdad permite que un rider recién
+  // agregado aparezca en las secciones sin obligar a guardar el caso antes.
+  const ridersVisibles = document.querySelectorAll("#ridersList .rider-row").length
+    ? collectRiders()
+    : CURRENT_CASE_RIDERS;
   return [
     { key: "lead", nombre: null, label: "Respondent (líder del caso)" },
-    ...CURRENT_CASE_RIDERS.map((r, i) => ({ key: `rider_${i}`, nombre: r.nombre, label: `Rider: ${r.nombre || "(sin nombre)"}` })),
+    ...ridersVisibles.map((r, i) => ({ key: `rider_${i}`, nombre: r.nombre, label: `Rider: ${r.nombre || "(sin nombre)"}` })),
   ];
+}
+
+function actualizarPersonasDeCasoEnTabs() {
+  for (const card of document.querySelectorAll("#tabsList .tab-card")) {
+    renderIdentidadesUploads(card);
+    renderBiometricosUploads(card);
+    renderDeclaracionesUploads(card);
+  }
 }
 
 /** Reconstruye las filas "tipo de documento + archivo" de Form of
@@ -682,7 +855,7 @@ async function onIdentidadUpload(card, input) {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("tipo", "identidad");
-    const res = await fetch("/api/evidencia", { method: "POST", body: formData });
+    const res = await fetch("/api/evidencia", { method: "POST", headers: { "X-EOIR-Request": "1" }, body: formData });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Error al subir el archivo");
     doc.evidencia_id = data.evidencia_id;
@@ -766,7 +939,7 @@ async function onBiometricoUpload(card, input) {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("tipo", "biometrics_compliance");
-    const res = await fetch("/api/evidencia", { method: "POST", body: formData });
+    const res = await fetch("/api/evidencia", { method: "POST", headers: { "X-EOIR-Request": "1" }, body: formData });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Error al subir el archivo");
     card._biometricosEvidencia[key] = { evidencia_id: data.evidencia_id, num_paginas: data.num_paginas };
@@ -927,7 +1100,7 @@ async function onDeclaracionUpload(card, input) {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("tipo", "declaration");
-    const res = await fetch("/api/evidencia", { method: "POST", body: formData });
+    const res = await fetch("/api/evidencia", { method: "POST", headers: { "X-EOIR-Request": "1" }, body: formData });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Error al subir el archivo");
     doc.evidencia_id = data.evidencia_id;
@@ -1004,7 +1177,7 @@ async function onDocumentUpload(card, input) {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("tipo", itemKey);
-    const res = await fetch("/api/evidencia", { method: "POST", body: formData });
+    const res = await fetch("/api/evidencia", { method: "POST", headers: { "X-EOIR-Request": "1" }, body: formData });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Error al subir el archivo");
     card._evidencias[itemKey] = { evidencia_id: data.evidencia_id, num_paginas: data.num_paginas };
@@ -1138,7 +1311,7 @@ async function onDocumentoSEUpload(card, input) {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("tipo", doc.tipo === "News" ? "news" : "supplemental_evidence");
-    const res = await fetch("/api/evidencia", { method: "POST", body: formData });
+    const res = await fetch("/api/evidencia", { method: "POST", headers: { "X-EOIR-Request": "1" }, body: formData });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Error al subir el archivo");
     doc.evidencia_id = data.evidencia_id;
@@ -1401,7 +1574,7 @@ async function generarDocumento() {
 
   const camposExtraValues = collectCamposExtra();
   for (const c of (plantilla && plantilla.campos_extra) || []) {
-    if (!c.opcional && !camposExtraValues[c.nombre]) {
+    if (!c.opcional && (camposExtraValues[c.nombre] === undefined || camposExtraValues[c.nombre] === null || camposExtraValues[c.nombre] === "")) {
       resultado.innerHTML = `<div class="status err">Falta el campo "${c.etiqueta}".</div>`;
       return;
     }
@@ -1437,6 +1610,9 @@ async function generarDocumento() {
     });
 
     let html = "";
+    if (r.estado_caso_guardado === false) {
+      html += `<div class="status warn">La evidencia no se fusionó completamente. No se avanzaron la letra ni la paginación del caso.</div>`;
+    }
     if (r.documentos.length > 1) {
       html += `<div class="status ok">${r.documentos.length} documentos generados (uno por Tab).</div>`;
     }
@@ -1484,8 +1660,9 @@ document.addEventListener("DOMContentLoaded", () => {
   init();
   attachANumberFormatter($("#a_number"));
   attachProximaAudienciaFormatter($("#proxima_audiencia"));
-  $("#selCaso").addEventListener("change", (e) => loadCase(e.target.value));
+  configurarBusquedaCasos();
   $("#btnNuevoCaso").addEventListener("click", clearCaseForm);
+  $("#btnEliminarCaso").addEventListener("click", eliminarCasoActual);
   $("#btnGuardarCaso").addEventListener("click", guardarCaso);
   $("#plantilla").addEventListener("change", onPlantillaChange);
   $("#plantillaVariante").addEventListener("change", actualizarUIPlantillaEfectiva);

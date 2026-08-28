@@ -8,20 +8,15 @@
 
 ---
 
-## 0. Lo más importante primero: lo que TÚ (con Word) puedes hacer que el entorno anterior NO
+## 0. Lo más importante primero: verificación visual
 
-El asistente anterior (Claude Code) trabajó en un sandbox donde
-**LibreOffice/`soffice` está roto** para convertir `.docx`→PDF (falla incluso
-con un docx trivial). Consecuencia: **nunca se pudo verificar el render visual
-real de ningún documento generado** — toda la verificación fue por inspección
-de la estructura XML del `.docx` (unzip + revisar `word/document.xml`) y por
-lo que el usuario reportaba viendo en su Word.
+El entorno anterior (Claude Code) no podía convertir `.docx`→PDF, por lo que
+la verificación histórica se hacía mediante XML. La auditoría del 2026-08-26
+cerró ese hueco: se generaron las seis plantillas Word con datos de estrés, se
+convirtieron con Microsoft Word, se rasterizaron y se revisó cada página.
 
-Si tú tienes Word (o una conversión docx→PDF confiable), tu mayor aporte es
-**cerrar ese hueco de verificación visual**. Hay varias cosas marcadas como
-"no verificadas visualmente" a lo largo de este documento y de `CLAUDE.md` —
-son candidatas directas a que las abras en Word y confirmes/corrijas. Las tres
-más importantes:
+En cambios futuros de maquetación debe repetirse este flujo. Las tres áreas
+más sensibles siguen siendo:
 
 1. **Alineación de la columna PAGES con la columna DESCRIPTION en la tabla de
    exhibits** (Table of Contents del Tab I-589). Es la fuente de casi todos los
@@ -409,18 +404,21 @@ confianza en vez de a ciegas.
 
 ## 11. Estado actual / punto de retomada
 
-- Última entrega: fix de alineación de PAGES en Supplemental Evidence estimando
-  líneas visuales (§7). 15/15 tests en verde.
+- Última entrega: auditoría integral aplicada el 2026-08-26. Se corrigieron
+  traversal y escritura atómica/cifrada de `case_store`, validación de API,
+  límites/retención, transacción de paginación con evidencia, llenado completo
+  del EOIR-33, recorte de próxima audiencia y páginas blancas configuradas.
+  Las dependencias quedaron fijadas y hay 20/20 tests en verde.
 - Features recientes completas: selector de tipo por documento/persona en
   Supplemental Evidence (Declaration/Psychological Report/News); Form of Identity
   con más de un documento por persona; Biometrics Compliance por persona con
   "modo evidencia".
-- **Pendiente natural (para ti, con Word):** verificación visual de todo lo
-  marcado "no verificado visualmente" en este documento y en `CLAUDE.md` —
-  especialmente la alineación PAGES/DESCRIPTION en casos con textos que
-  envuelven, los saltos de página de written-pleadings, y las firmas dinámicas.
-  Si encuentras un desalineamiento, el detalle exacto (texto + línea observada
-  vs. esperada) es lo que permite el arreglo preciso.
+- Se generaron y renderizaron con Microsoft Word los seis documentos Word y el
+  EOIR-33 usando datos de estrés. Se revisaron todas sus páginas: no quedaron
+  páginas vacías, la audiencia permanece dentro del margen, PAGES se alinea y
+  la dirección larga de la corte aparece completa en el AcroForm.
+- QA final: Ruff y Bandit sin hallazgos; `pip-audit` sin vulnerabilidades
+  conocidas; cobertura total 58% (motor Word 76%, EOIR-33 81%).
 
 > Para el detalle exhaustivo de cualquier punto, `CLAUDE.md` en la raíz del repo
 > es la referencia completa. Este documento es el mapa; ese archivo es el

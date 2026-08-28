@@ -20,7 +20,14 @@ import tempfile
 import time
 from pathlib import Path
 
-from pypdf import PdfReader, PdfWriter
+from pypdf import PdfReader, PdfWriter, Transformation
+from pypdf._page import PageObject
+
+
+# ISO 216 A4, en puntos PDF (1 punto = 1/72 pulgada). Las evidencias se
+# escalan proporcionalmente y se centran: nunca se recorta contenido.
+_A4_WIDTH = 595.2756
+_A4_HEIGHT = 841.8898
 
 
 class PdfMergeError(Exception):
@@ -47,6 +54,34 @@ def _pagina_numero_overlay(width: float, height: float, numero: int):
     c.save()
     buf.seek(0)
     return PdfReader(buf).pages[0]
+
+
+def _normalizar_pagina_a4(page: PageObject) -> PageObject:
+    """Devuelve una copia visual de ``page`` centrada en una hoja A4.
+
+    La transformación ocurre solamente al armar el PDF final: el archivo
+    de evidencia subido permanece intacto. Se conserva toda la página y su
+    proporción, agregando márgenes blancos cuando sea necesario. También se
+    aplica primero cualquier rotación declarada en el PDF, para que tanto la
+    orientación como la numeración posterior usen coordenadas visuales reales.
+    """
+    page.transfer_rotation_to_content()
+    width = float(page.mediabox.width)
+    height = float(page.mediabox.height)
+    if width <= 0 or height <= 0:
+        raise PdfMergeError("Una página de evidencia tiene dimensiones inválidas.")
+
+    scale = min(_A4_WIDTH / width, _A4_HEIGHT / height)
+    offset_x = (_A4_WIDTH - width * scale) / 2
+    offset_y = (_A4_HEIGHT - height * scale) / 2
+    a4_page = PageObject.create_blank_page(width=_A4_WIDTH, height=_A4_HEIGHT)
+    a4_page.merge_transformed_page(
+        page,
+        Transformation().scale(scale).translate(offset_x, offset_y),
+        over=True,
+        expand=False,
+    )
+    return a4_page
 
 
 def _replace_with_retry(tmp_path: Path, out_path: Path, attempts: int = 6) -> None:
@@ -129,16 +164,9 @@ def combinar_portada_y_evidencia(
         except Exception as e:  # noqa: BLE001
             raise PdfMergeError(f"No se pudo leer el PDF de evidencia '{Path(evidencia_pdf).name}': {e}")
         for page in reader.pages:
-            # algunos PDFs de evidencia (sobre todo escaneos) traen /Rotate
-            # distinto de 0: la página se ve derecha porque el visor la gira
-            # al mostrarla, pero sus coordenadas siguen siendo las de ANTES
-            # de girar. Sin "quemar" ese giro en el contenido, el número que
-            # dibujamos en la esquina inferior derecha (en esas coordenadas
-            # sin girar) termina apareciendo en otra esquina — típicamente
-            # arriba a la derecha — una vez que el visor aplica el giro.
-            page.transfer_rotation_to_content()
-            width = float(page.mediabox.width)
-            height = float(page.mediabox.height)
+            page = _normalizar_pagina_a4(page)
+            width = _A4_WIDTH
+            height = _A4_HEIGHT
             overlay = _pagina_numero_overlay(width, height, numero)
             page.merge_page(overlay)
             writer.add_page(page)
@@ -160,7 +188,7 @@ def combinar_portada_y_evidencia(
         for reader in (portada_reader, *lectores_evidencia):
             try:
                 reader.stream.close()
-            except Exception:  # noqa: BLE001
+            except Exception:  # nosec B110  # noqa: BLE001, S110 -- cierre defensivo de pypdf
                 pass
         _replace_with_retry(tmp_path, out_path)
     finally:
@@ -203,7 +231,7 @@ def _localizar_paginas_exhibits(portada_reader: PdfReader, letras: list[str]) ->
             break
         try:
             texto = _solo_letras(page.extract_text() or "")
-        except Exception:  # noqa: BLE001
+        except Exception:  # nosec B112  # noqa: BLE001, S112 -- página sin texto; se revisan las demás
             continue
         for letra, objetivo in objetivos.items():
             if letra not in encontrados and texto == objetivo:
@@ -268,15 +296,9 @@ def combinar_portada_y_evidencia_exhibits(
                 except Exception as e:  # noqa: BLE001
                     raise PdfMergeError(f"No se pudo leer el PDF de evidencia '{Path(evidencia_pdf).name}': {e}")
                 for epage in reader.pages:
+                    epage = _normalizar_pagina_a4(epage)
                     if numerar:
-                        # ver comentario equivalente en combinar_portada_y_evidencia:
-                        # sin esto, un PDF de evidencia escaneado con /Rotate
-                        # distinto de 0 termina con el número fuera de la
-                        # esquina inferior derecha.
-                        epage.transfer_rotation_to_content()
-                        width = float(epage.mediabox.width)
-                        height = float(epage.mediabox.height)
-                        overlay = _pagina_numero_overlay(width, height, numero)
+                        overlay = _pagina_numero_overlay(_A4_WIDTH, _A4_HEIGHT, numero)
                         epage.merge_page(overlay)
                     writer.add_page(epage)
                     numero += 1
@@ -291,7 +313,7 @@ def combinar_portada_y_evidencia_exhibits(
         for reader in (portada_reader, *lectores_evidencia):
             try:
                 reader.stream.close()
-            except Exception:  # noqa: BLE001
+            except Exception:  # nosec B110  # noqa: BLE001, S110 -- cierre defensivo de pypdf
                 pass
         _replace_with_retry(tmp_path, out_path)
     finally:
@@ -320,7 +342,7 @@ def _extraer_texto_primeras_paginas(pdf_path: Path, max_paginas: int = 2) -> str
     for page in reader.pages[:max_paginas]:
         try:
             texto.append(page.extract_text() or "")
-        except Exception:  # noqa: BLE001
+        except Exception:  # nosec B112  # noqa: BLE001, S112 -- extracción heurística opcional
             continue
     return "\n".join(texto)
 
@@ -372,9 +394,8 @@ def _buscar_pais(texto: str | None) -> str | None:
         if pais == "United States":
             continue
         patron = r"\b" + re.escape(pais.lower()) + r"\b"
-        if re.search(patron, texto_low):
-            if mejor is None or len(pais) > len(mejor):
-                mejor = pais
+        if re.search(patron, texto_low) and (mejor is None or len(pais) > len(mejor)):
+            mejor = pais
     return mejor
 
 

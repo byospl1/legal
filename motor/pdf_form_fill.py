@@ -17,10 +17,11 @@ import datetime
 import io
 import json
 import re
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
-from pypdf import PdfReader, PdfWriter
+from pypdf import PageObject, PdfReader, PdfWriter
 from pypdf.generic import BooleanObject, NameObject
 
 from motor.ooxml_utils import png_dimensions
@@ -74,6 +75,13 @@ def _firma_paralegal_path(preparador: str | None) -> Path | None:
     return path if path.is_file() else None
 
 
+def _wrap_court_address(value: str) -> str:
+    """Aprovecha el AcroForm multilínea para que la dirección no se corte."""
+    return "\n".join(
+        textwrap.wrap(value, width=38, break_long_words=False, break_on_hyphens=False)
+    )
+
+
 def _rect_de_campo(reader: PdfReader, nombre_campo: str) -> tuple[float, float, float, float] | None:
     for page in reader.pages:
         for annot in page.get("/Annots") or []:
@@ -85,7 +93,7 @@ def _rect_de_campo(reader: PdfReader, nombre_campo: str) -> tuple[float, float, 
     return None
 
 
-def _overlay_texto(width: float, height: float, x: float, y: float, texto: str) -> "PageObject":
+def _overlay_texto(width: float, height: float, x: float, y: float, texto: str) -> PageObject:
     from reportlab.pdfgen import canvas
 
     buf = io.BytesIO()
@@ -97,7 +105,7 @@ def _overlay_texto(width: float, height: float, x: float, y: float, texto: str) 
     return PdfReader(buf).pages[0]
 
 
-def _overlay_imagen(width: float, height: float, x: float, y: float, w: float, h: float, image_path: Path) -> "PageObject":
+def _overlay_imagen(width: float, height: float, x: float, y: float, w: float, h: float, image_path: Path) -> PageObject:
     from reportlab.pdfgen import canvas
 
     buf = io.BytesIO()
@@ -108,10 +116,10 @@ def _overlay_imagen(width: float, height: float, x: float, y: float, w: float, h
     return PdfReader(buf).pages[0]
 
 
-def _resolve_values(case: dict, document_instance: dict) -> dict[str, str]:
+def _resolve_values(case: dict, document_instance: dict) -> dict[str, str | bool]:
     from motor.case_store import a_number_para_documento, nombre_para_documento
 
-    hoy = datetime.date.today().strftime("%m/%d/%Y")
+    hoy = datetime.datetime.now(datetime.timezone.utc).date().strftime("%m/%d/%Y")
     return {
         "cliente_nombre": nombre_para_documento(case),
         "a_number": a_number_para_documento(case),
@@ -121,6 +129,14 @@ def _resolve_values(case: dict, document_instance: dict) -> dict[str, str]:
         "ciudad_anterior": (document_instance.get("ciudad_anterior") or "").strip(),
         "direccion_actual": (document_instance.get("direccion_actual") or "").strip(),
         "ciudad_actual": (document_instance.get("ciudad_actual") or "").strip(),
+        "telefono_anterior": (document_instance.get("telefono_anterior") or "").strip(),
+        "email_anterior": (document_instance.get("email_anterior") or "").strip(),
+        "telefono_actual": (document_instance.get("telefono_actual") or "").strip(),
+        "email_actual": (document_instance.get("email_actual") or "").strip(),
+        "direccion_servicio_1": (document_instance.get("direccion_servicio_1") or "").strip(),
+        "direccion_servicio_2": (document_instance.get("direccion_servicio_2") or "").strip(),
+        "direccion_corte": _wrap_court_address((document_instance.get("direccion_corte") or "").strip()),
+        "servicio_ecas": bool(document_instance.get("servicio_ecas")),
     }
 
 
@@ -149,20 +165,23 @@ def generar_pdf_formulario(
 
     datos_pdf = {}
     for campo_pdf, nombre_valor in (field_map.get("campos_texto") or {}).items():
-        valor = values.get(nombre_valor)
-        if valor:
-            datos_pdf[campo_pdf] = valor
+        datos_pdf[campo_pdf] = values.get(nombre_valor) or ""
 
     casilla = field_map.get("casilla_no_service_needed")
     if casilla:
-        datos_pdf[casilla] = "/Yes"
+        if isinstance(casilla, str):
+            campo_casilla, valor_casilla = casilla, True
+        else:
+            campo_casilla = casilla["campo_pdf"]
+            valor_casilla = bool(values.get(casilla["valor"]))
+        datos_pdf[campo_casilla] = "/Yes" if valor_casilla else "/Off"
 
     for page in writer.pages:
         writer.update_page_form_field_values(page, datos_pdf, auto_regenerate=False)
 
     acroform = writer._root_object.get("/AcroForm")
     if acroform is not None:
-        acroform.get_object()[NameObject("/NeedAppearances")] = BooleanObject(True)
+        acroform.get_object()[NameObject("/NeedAppearances")] = BooleanObject(False)
 
     firma_cliente = field_map.get("firma_cliente_iniciales")
     if firma_cliente:
@@ -195,7 +214,12 @@ def generar_pdf_formulario(
             overlay = _overlay_imagen(w, h, x0 + 10, y0, ancho, alto, img)
             page.merge_page(overlay)
 
-    cliente = _sanitize_filename_part(case.get("cliente_nombre") or "caso").replace(" ", "_").replace(",", "")
+    cliente = (
+        _sanitize_filename_part(case.get("cliente_nombre") or "caso")
+        .replace(" ", "_")
+        .replace(",", "")[:30]
+        .rstrip("._-")
+    ) or "caso"
     a_num = re.sub(r"\D", "", case.get("a_number") or "")
     base_name = f"{cliente}_{a_num}_EOIR33"
     salida = output_dir / f"{base_name}.pdf"
@@ -207,7 +231,7 @@ def generar_pdf_formulario(
     with open(salida, "wb") as f:
         writer.write(f)
 
-    ok, errores = _validar_pdf(salida, len(reader.pages))
+    ok, errores = _validar_pdf(salida, len(reader.pages), datos_pdf)
 
     from motor.pdf_tools import PdfToolsError, rasterize
 
@@ -228,7 +252,9 @@ def generar_pdf_formulario(
     )
 
 
-def _validar_pdf(pdf_path: Path, paginas_esperadas: int) -> tuple[bool, list[str]]:
+def _validar_pdf(
+    pdf_path: Path, paginas_esperadas: int, valores_esperados: dict[str, str] | None = None
+) -> tuple[bool, list[str]]:
     errores = []
     try:
         reader = PdfReader(str(pdf_path))
@@ -236,6 +262,33 @@ def _validar_pdf(pdf_path: Path, paginas_esperadas: int) -> tuple[bool, list[str
             errores.append(
                 f"El PDF generado tiene {len(reader.pages)} página(s), se esperaban {paginas_esperadas}."
             )
+        fields = reader.get_fields() or {}
+        for nombre, esperado in (valores_esperados or {}).items():
+            field = fields.get(nombre)
+            if field is None:
+                errores.append(f"Falta el campo AcroForm '{nombre}' en el PDF generado.")
+                continue
+            actual = str(field.get("/V") or "")
+            if actual != str(esperado):
+                errores.append(f"El campo '{nombre}' quedó como {actual!r}; se esperaba {str(esperado)!r}.")
+
+        widgets_por_nombre = {}
+        for page in reader.pages:
+            for annot in page.get("/Annots") or []:
+                obj = annot.get_object()
+                if obj.get("/Subtype") != "/Widget":
+                    continue
+                parent_ref = obj.get("/Parent")
+                parent = parent_ref.get_object() if parent_ref else None
+                nombre = obj.get("/T") or (parent.get("/T") if parent else None)
+                if nombre:
+                    widgets_por_nombre.setdefault(nombre, []).append(obj)
+        for nombre in (valores_esperados or {}):
+            widgets = widgets_por_nombre.get(nombre) or []
+            if not widgets:
+                errores.append(f"El campo '{nombre}' no tiene widget visible.")
+            elif not any((w.get("/AP") or {}).get("/N") for w in widgets):
+                errores.append(f"El campo '{nombre}' no tiene una apariencia visual actualizada.")
     except Exception as e:  # noqa: BLE001
         errores.append(f"El PDF generado no se pudo volver a abrir: {e}")
     return (not errores, errores)

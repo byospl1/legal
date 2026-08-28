@@ -7,6 +7,26 @@ step). Este archivo es la referencia que **siempre** debe leerse/tenerse en
 cuenta al iterar sobre tabs o motions — evita releer código para reconstruir
 reglas que ya están decididas, y evita repetir errores ya corregidos.
 
+## Auditoría integral aplicada — 2026-08-26
+
+- `case_store` valida IDs contra traversal, guarda atómicamente con un
+  respaldo y cifra con DPAPI por defecto en Windows; la UI permite borrar
+  casos y salidas.
+- La API valida objetos, campos requeridos, A#, riders, Tabs y evidencia;
+  limita subidas, depura evidencia temporal y exige una cabecera local en
+  peticiones mutables. Se añadieron cabeceras de privacidad/CSP.
+- EOIR-33 ya llena dirección de corte, teléfonos, correos y dirección de
+  servicio. La casilla "No Service Needed" depende de `servicio_ecas` y la
+  validación comprueba valores y apariencias AcroForm.
+- El estado de página/último Tab se confirma solo después de una fusión de
+  evidencia exitosa.
+- Juez y próxima audiencia se colocan en dos líneas controladas para impedir
+  recorte lateral. La limpieza de relleno vacío está declarada por plantilla
+  en `layout_cleanup` y debe verificarse visualmente después de cada cambio.
+- Las dependencias están fijadas a versiones probadas. `tests/run_tests.py`
+  contiene regresiones de seguridad e integración para los seis Word y el
+  PDF EOIR-33.
+
 ## Errores ya corregidos — checklist rápido (NO repetir)
 
 Resumen de cada problema real que se presentó, su causa y el fix aplicado.

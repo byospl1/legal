@@ -9,11 +9,18 @@
     "city state zip country - former": "ciudad_anterior",
     "number street address - current": "direccion_actual",
     "city state zip country - current": "ciudad_actual",
+    "phone number - former": "telefono_anterior",
+    "email address - former": "email_anterior",
+    "phone number - current": "telefono_actual",
+    "email address - current": "email_actual",
     "date": "fecha_hoy",
     "name - proof of service": "preparador",
-    "date - proof of service": "fecha_hoy"
+    "date - proof of service": "fecha_hoy",
+    "office of principal legal advisor 1": "direccion_servicio_1",
+    "office of principal legal advisor 2": "direccion_servicio_2",
+    "CourtAddress": "direccion_corte"
   },
-  "casilla_no_service_needed": "No Service Needed",
+  "casilla_no_service_needed": { "campo_pdf": "No Service Needed", "valor": "servicio_ecas" },
   "firma_cliente_iniciales": { "campo_pdf": "Signature1", "pagina": 0 },
   "firma_paralegal_imagen": { "campo_pdf": "Signature2", "pagina": 0, "categoria": "preparadores" }
 }
