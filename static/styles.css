@@ -64,6 +64,23 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Marca de autoría visible en todas las pantallas, sin bloquear controles. */
+.watermark {
+  position: fixed;
+  z-index: 20;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-28deg);
+  color: rgba(122, 34, 49, 0.09);
+  font-family: var(--font-serif);
+  font-size: clamp(28px, 5vw, 64px);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
+
 ::selection { background: var(--accent-line); color: var(--accent-dark); }
 
 /* ---------- Top bar ---------- */
