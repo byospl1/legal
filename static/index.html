@@ -33,12 +33,14 @@
 
     <div class="row" style="margin-bottom:14px; align-items:flex-end;">
       <div class="field" style="min-width:260px;">
-        <label>Caso existente</label>
-        <select id="selCaso">
-          <option value="">— Nuevo caso —</option>
-        </select>
+        <label for="buscarCaso">Caso existente</label>
+        <div class="case-search">
+          <input type="search" id="buscarCaso" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="casoSugerencias" placeholder="Busca por nombre o A#">
+          <div id="casoSugerencias" class="case-suggestions" role="listbox" hidden></div>
+        </div>
       </div>
       <button id="btnNuevoCaso" type="button">Nuevo caso</button>
+      <button id="btnEliminarCaso" class="danger" type="button" disabled>Eliminar caso</button>
     </div>
 
     <div class="grid">
@@ -155,7 +157,7 @@
     <h2><span class="badge">3</span> Documentos generados</h2>
     <p class="subtitle">Historial de corridas — la carpeta <code>output/</code>.</p>
     <table class="salidas" id="tablaSalidas">
-      <thead><tr><th>Documento</th><th>PDF</th><th>Verificación visual</th></tr></thead>
+      <thead><tr><th>Documento</th><th>PDF</th><th>Verificación visual</th><th>Privacidad</th></tr></thead>
       <tbody></tbody>
     </table>
     <p class="muted" id="sinSalidas" style="display:none;">Todavía no se ha generado ningún documento.</p>

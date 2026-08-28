@@ -117,6 +117,16 @@
     }
   ],
   "tiene_tabla_exhibits": false,
+  "audiencia_layout": {
+    "juez_label": "Hon. Immigration Judge: ",
+    "audiencia_label": "Next Hearing: "
+  },
+  "layout_cleanup": {
+    "remove_empty_before_page_breaks": true,
+    "empty_before_markers": {
+      "MOTION FOR WEBEX APPEARANCE": 3
+    }
+  },
   "plural_riders": [
     {
       "buscar": "COMES NOW Respondent",

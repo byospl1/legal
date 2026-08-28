@@ -44,7 +44,7 @@ class Sdt:
         self.end = end
         self.depth = depth
         self.xml = xml
-        self.children: list["Sdt"] = []
+        self.children: list[Sdt] = []
         self.id = self._extract_id()
         self.content_start_offset, self.content_xml = self._extract_content()
 
@@ -81,7 +81,7 @@ class Sdt:
     @property
     def nivel(self) -> str:
         stripped = self.content_xml.lstrip()
-        return "parrafo" if stripped.startswith("<w:p ") or stripped.startswith("<w:p>") else "inline"
+        return "parrafo" if stripped.startswith(("<w:p ", "<w:p>")) else "inline"
 
     @property
     def tipo(self) -> str:
@@ -182,8 +182,6 @@ def find_automatic_fields(document_xml: str) -> list[dict]:
 
 def build_field_map(document_xml: str, template_id: str, archivo: str) -> dict:
     top_sdts = extract_top_level_sdts(document_xml)
-    by_start = {s.start: s for s in top_sdts}
-
     bookmarks = find_bookmarks(document_xml)
     refs = find_ref_fields(document_xml)
 
@@ -263,8 +261,8 @@ def build_field_map(document_xml: str, template_id: str, archivo: str) -> dict:
 
     campos_automaticos = find_automatic_fields(document_xml)
 
-    tiene_tabla = bool(re.search(r">TAB<.*?>DESCRIPTION<.*?>PAGES<", document_xml, re.S)) or bool(
-        re.search(r">DESCRIPTION<.*?>PAGES<", document_xml, re.S)
+    tiene_tabla = bool(re.search(r">TAB<.*?>DESCRIPTION<.*?>PAGES<", document_xml, re.DOTALL)) or bool(
+        re.search(r">DESCRIPTION<.*?>PAGES<", document_xml, re.DOTALL)
     )
 
     return {

@@ -42,6 +42,10 @@
     { "tipo": "DATE", "descripcion": "Campo de Word autoactualizable (DATE \\@ \"MMMM d, yyyy\"), Proof of Service — no tocar" }
   ],
   "tiene_tabla_exhibits": false,
+  "audiencia_layout": {
+    "juez_label": "Honorable Judge: ",
+    "audiencia_label": "Next Hearing: "
+  },
   "_notas": [
     "Plantilla creada 2026-08-25 a partir de un documento YA LLENADO (caso Insuasti Ruiz) que el usuario compartió como ejemplo, con instrucción de tomar como campos SOLO lo que estaba subrayado en Word. No traía ningún content control (w:sdt) de fábrica — se le hizo cirugía manual completa (unpack/merge_runs/rezip) para envolver cada campo en un <w:sdt>, igual que las demás plantillas.",
     "El .docx traía, incrustada DOS VECES (rama moderna 'Choice' y rama legacy VML 'Fallback' del mismo cuadro de texto 'Certificate of Translation'), la firma real escaneada del TRADUCTOR (Bruno Briz, JPEG en word/media/image1.jpeg, referenciada por rId7) — NO era la firma del cliente como se pensó en un primer momento. Se eliminó por completo (imagen, relationship, referencia en document.xml) siguiendo la regla ya establecida del despacho: ninguna plantilla lleva firma quemada/anclada. En su lugar se agregó el mecanismo dinámico firmas_imagen para 'traductor' (categoria 'preparadores', reutiliza firmas/preparadores/<nombre>.png — Bruno Briz ya está en catalogos.json como preparador).",

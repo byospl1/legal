@@ -105,6 +105,51 @@
           "nombre": "ciudad_actual",
           "etiqueta": "Dirección ACTUAL — City, State, ZIP",
           "placeholder": "ej. ATLANTA, GA 30316"
+        },
+        {
+          "nombre": "telefono_anterior",
+          "etiqueta": "Teléfono anterior",
+          "placeholder": "Incluye código de país si aplica",
+          "opcional": true
+        },
+        {
+          "nombre": "email_anterior",
+          "etiqueta": "Correo electrónico anterior",
+          "opcional": true
+        },
+        {
+          "nombre": "telefono_actual",
+          "etiqueta": "Teléfono actual",
+          "placeholder": "Incluye código de país si aplica",
+          "opcional": true
+        },
+        {
+          "nombre": "email_actual",
+          "etiqueta": "Correo electrónico actual",
+          "opcional": true
+        },
+        {
+          "nombre": "direccion_corte",
+          "etiqueta": "Dirección postal de la Immigration Court que lleva el caso",
+          "placeholder": "Verifica la dirección vigente y escribe nombre de la corte, calle, ciudad, estado y ZIP",
+          "tipo": "textarea"
+        },
+        {
+          "nombre": "servicio_ecas",
+          "etiqueta": "¿La persona que presenta el formulario es usuaria registrada de ECAS y lo presentará mediante ECAS Case Portal?",
+          "tipo": "booleano"
+        },
+        {
+          "nombre": "direccion_servicio_1",
+          "etiqueta": "Dirección de servicio a OPLA/ICE — línea 1",
+          "placeholder": "Requerida si no se presenta mediante ECAS",
+          "opcional": true
+        },
+        {
+          "nombre": "direccion_servicio_2",
+          "etiqueta": "Dirección de servicio a OPLA/ICE — línea 2",
+          "placeholder": "Ciudad, estado y ZIP",
+          "opcional": true
         }
       ]
     },

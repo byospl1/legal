@@ -233,6 +233,40 @@ input::placeholder { color: var(--text-faint); }
 
 .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 
+/* Búsqueda de casos: las sugerencias se mantienen dentro del flujo visual
+   del campo y no muestran información hasta que el usuario enfoca o escribe. */
+.case-search { position: relative; }
+.case-suggestions {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 250px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+.case-suggestion {
+  display: block;
+  width: 100%;
+  padding: 9px 11px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 400;
+  text-align: left;
+}
+.case-suggestion:last-child { border-bottom: 0; }
+.case-suggestion:hover, .case-suggestion.active { background: var(--accent-bg); color: var(--accent-dark); }
+.case-suggestion .case-a-number { color: var(--text-dim); font-family: var(--font-mono); font-size: 12.5px; }
+
 /* ---------- Buttons ---------- */
 
 button {

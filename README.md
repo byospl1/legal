@@ -7,26 +7,19 @@ programar para usarlo día a día.
 
 ## Requisitos (Windows)
 
-1. **Python 3.11 o superior** — https://www.python.org/downloads/
-   Al instalar, marca la casilla **"Add Python to PATH"**.
-2. **LibreOffice** (gratis) — https://www.libreoffice.org/download/download/
-   Se usa para convertir cada documento generado a PDF de verificación.
-3. **Poppler for Windows** — https://github.com/oschwartz10612/poppler-windows/releases
-   Se usa para generar las imágenes de cada página del PDF (para revisar
-   visualmente antes de dar el documento por bueno). Descarga el `.zip`,
-   descomprímelo (ej. en `C:\poppler`) y agrega la carpeta `Library\bin` de
-   adentro al PATH del sistema (Panel de control → Sistema → Configuración
-   avanzada → Variables de entorno → `Path` → Nueva).
-
-Si LibreOffice o Poppler no están instalados, el sistema igual genera el
-`.docx` — simplemente no podrás ver el PDF de verificación automático y
-deberás abrir el Word manualmente para revisarlo.
+El instalador automático instala Python 3, LibreOffice, Poppler y las
+dependencias de Python mediante **winget** si aún no están disponibles. Se
+requiere Windows 10/11 con App Installer (winget), conexión a Internet y, si
+Windows lo solicita, autorización para instalar software. Si una descarga
+falla, el instalador se detiene y muestra el error; no anuncia una instalación
+incompleta como si hubiera terminado.
 
 ## Instalación
 
 1. Descarga/clona esta carpeta completa a tu computadora.
-2. Doble clic en **`instalar.bat`**. Esto crea un entorno de Python aislado
-   (`venv/`) e instala las dependencias necesarias.
+2. Doble clic en **`instalar.bat`**. Si falta algún requisito, lo descarga e
+   instala automáticamente; después crea un entorno de Python aislado (`venv/`)
+   e instala las dependencias del sistema.
 
 ## Uso diario
 
@@ -44,7 +37,33 @@ deberás abrir el Word manualmente para revisarlo.
    de usarlo — así se detectaron los bugs reales durante el desarrollo.
 6. Descarga el `.docx` o el PDF desde los enlaces que aparecen, o desde la
    tabla de "Documentos generados" más abajo (también sirve para corridas
-   anteriores).
+   anteriores). Usa **Eliminar** en esa tabla cuando ya no necesites una
+   salida; también puedes eliminar un caso y su respaldo desde el Paso 1.
+
+### EOIR-33
+
+La dirección de la corte no se toma de un valor fijo: escríbela y verifícala
+para el expediente concreto. El formulario también pide expresamente si se
+presentará mediante ECAS. Si la respuesta es **No**, la dirección de servicio
+a OPLA/ICE es obligatoria. Teléfonos y correos anteriores/actuales se incluyen
+cuando se proporcionan.
+
+## Privacidad y límites
+
+- En Windows, `case_store` se cifra por defecto con DPAPI, ligado a la cuenta
+  de Windows que guardó los casos. Los JSON antiguos se pueden leer y se
+  migran al siguiente guardado. Para una instalación de desarrollo que deba
+  ser portable se puede usar `EOIR_ENCRYPT_CASES=0`, aceptando que los casos
+  quedarán en texto plano.
+- Cada actualización conserva un único respaldo `.json.bak` y el guardado es
+  atómico. El botón **Eliminar caso** borra ambos archivos.
+- La evidencia temporal subida se depura después de 24 horas o al reiniciar
+  el servidor. Las salidas finales se conservan hasta que el usuario las
+  elimina.
+- El límite de subida predeterminado es 50 MB por solicitud. Se puede ajustar
+  entre 1 y 500 MB con `EOIR_MAX_UPLOAD_MB` antes de iniciar la aplicación.
+- La aplicación escucha solo en `127.0.0.1`, desactiva caché de respuestas y
+  aplica cabeceras de seguridad. No la publiques directamente en Internet.
 
 Para dejar el sistema corriendo, no cierres la ventana negra (consola) que
 abrió `iniciar.bat`. Para apagarlo, ciérrala.
@@ -217,13 +236,25 @@ layout ahí afecta a todos los documentos que se generen después.
 /plantillas/<id>/field_map.json     mapa de campos (generado + revisado a mano)
 /plantillas/<id>/fragments/         XML literal de bloques fijos (tabla de exhibits, etc.)
 /catalogos.json                     catálogos fijos (corte, juez, abogado, preparador, títulos)
-/case_store/<id>.json               datos de cada caso (NO se sube a git — datos de clientes)
+/case_store/<id>.json               datos cifrados del caso en Windows (NO se suben a git)
 /output/                            documentos generados (.docx + .pdf + imágenes de verificación)
 /input/                             carpeta libre para que dejes ahí documentos de entrada si los necesitas
 /motor/                             el motor (analyze_template, fill_engine, exhibit_builder, etc.)
 /app.py                             servidor web local (Flask)
 /static/                            interfaz HTML/JS
+/tests/run_tests.py                 pruebas funcionales, de seguridad y regresión
 ```
+
+## Verificación técnica
+
+Desde la carpeta del proyecto, con el entorno activado:
+
+```
+python tests\run_tests.py
+```
+
+La suite genera todas las plantillas Word con datos de estrés, valida el
+EOIR-33 real y cubre almacenamiento, API, paginación y tablas de evidencia.
 
 ## Pendientes de negocio (no técnicos)
 

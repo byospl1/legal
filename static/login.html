@@ -38,48 +38,7 @@
   </form>
 </section>
 
-<script>
-// En modo Firebase el identificador es el correo electrónico; se ajusta el
-// rótulo y el tipo de campo para que quede claro y el navegador ofrezca
-// autocompletar el email. En modo local sigue diciendo "Usuario".
-(async () => {
-  try {
-    const r = await fetch("/api/login-info");
-    if (!r.ok) return;
-    const { modo } = await r.json();
-    if (modo === "firebase") {
-      document.getElementById("usuario-label").textContent = "Correo electrónico";
-      const inp = document.getElementById("usuario");
-      inp.type = "email";
-      inp.setAttribute("autocomplete", "email");
-      inp.setAttribute("placeholder", "nombre@ejemplo.com");
-    }
-  } catch (e) { /* si falla, se queda con el rótulo por defecto */ }
-})();
-
-document.getElementById("login-form").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  const errorEl = document.getElementById("login-error");
-  errorEl.textContent = "";
-  const usuario = document.getElementById("usuario").value.trim();
-  const password = document.getElementById("password").value;
-  try {
-    const resp = await fetch("/api/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ usuario, password }),
-    });
-    if (!resp.ok) {
-      const data = await resp.json().catch(() => ({}));
-      errorEl.textContent = data.error || "No se pudo iniciar sesión.";
-      return;
-    }
-    window.location.href = "/";
-  } catch (e) {
-    errorEl.textContent = "Error de conexión. Intenta de nuevo.";
-  }
-});
-</script>
+<script src="/static/login.js"></script>
 
 </body>
 </html>

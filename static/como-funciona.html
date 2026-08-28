@@ -167,29 +167,7 @@
   Kostiv Cardinal International Law Group Corp. · Sistema interno de llenado de Tabs — uso exclusivo del despacho
 </footer>
 
-<script>
-// El login solo se usa en la nube; en local está apagado y no se muestra el
-// link de "Cerrar sesión". Esta página no carga app.js, así que consulta el
-// estado por su cuenta.
-(async () => {
-  const logoutLink = document.getElementById("logout-link");
-  if (!logoutLink) return;
-  let loginHabilitado = false;
-  try {
-    const r = await fetch("/api/init");
-    if (r.ok) loginHabilitado = (await r.json()).login_habilitado === true;
-  } catch (e) { /* si falla, se oculta el link por las dudas */ }
-  if (!loginHabilitado) {
-    logoutLink.style.display = "none";
-    return;
-  }
-  logoutLink.addEventListener("click", async (ev) => {
-    ev.preventDefault();
-    await fetch("/api/logout", { method: "POST" });
-    window.location.href = "/login";
-  });
-})();
-</script>
+<script src="/static/como-funciona.js"></script>
 
 </body>
 </html>

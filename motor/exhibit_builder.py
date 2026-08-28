@@ -376,7 +376,7 @@ def _estimar_lineas_visuales(texto: str) -> int:
     hay que ajustar con el caso concreto, no a ciegas."""
     try:
         from reportlab.pdfbase.pdfmetrics import stringWidth
-    except Exception:
+    except ImportError:
         return 1
     palabras = texto.split()
     if not palabras:
@@ -385,10 +385,7 @@ def _estimar_lineas_visuales(texto: str) -> int:
     actual = ""
     for palabra in palabras:
         candidato = palabra if not actual else actual + " " + palabra
-        try:
-            ancho = stringWidth(candidato, "Times-Roman", 12)
-        except Exception:
-            return max(lineas, 1)
+        ancho = stringWidth(candidato, "Times-Roman", 12)
         if ancho <= _DESC_CELL_ANCHO_UTIL_PTS:
             actual = candidato
         else:
@@ -715,7 +712,7 @@ def build_dividers(tab_groups: list[dict]) -> str:
     for tg in tab_groups:
         title_xml = re.sub(
             r"(<w:t[^>]*>)[^<]*(</w:t>)",
-            lambda m: m.group(1) + f"“EXHIBIT {_xml_escape(tg['letra'])}”" + m.group(2),
+            lambda m, letra=tg["letra"]: m.group(1) + f"“EXHIBIT {_xml_escape(letra)}”" + m.group(2),
             title_tpl,
             count=1,
         )

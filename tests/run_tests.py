@@ -22,13 +22,25 @@ from __future__ import annotations
 
 import re
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from motor import exhibit_builder as eb  # noqa: E402
-from motor.case_store import next_tab_letra  # noqa: E402
-from motor.pdf_merge import _ANIO_RE  # noqa: E402
+from motor import exhibit_builder as eb
+from motor.case_store import load_case, next_tab_letra, save_case
+from motor.fill_engine import _tipo_tab_label, generar_documento
+from motor.pdf_form_fill import generar_pdf_formulario
+from motor.pdf_merge import (
+    _A4_HEIGHT,
+    _A4_WIDTH,
+    _ANIO_RE,
+    _normalizar_pagina_a4,
+    combinar_portada_y_evidencia,
+    combinar_portada_y_evidencia_exhibits,
+)
 
 SUBTITLE_BIOMETRICS = "Biometrics Compliance."
 
@@ -383,6 +395,18 @@ def test_next_tab_letra():
         _assert(got == esperado, f"next_tab_letra({entrada!r}) = {got!r}, se esperaba {esperado!r}")
 
 
+def test_nombre_de_salida_agrega_categoria_del_tab():
+    _assert(
+        _tipo_tab_label({"exhibits": [{"letra": "A", "categorias": ["fee"]}]}) == "TabA_fee",
+        "el nombre del Tab de fee no incluye su categoría",
+    )
+    _assert(
+        _tipo_tab_label({"exhibits": [{"letra": "B", "categorias": ["fee", "form_of_identity"]}]})
+        == "TabB_form_of_identity_fee",
+        "las categorías del Tab no quedan en el orden estable esperado",
+    )
+
+
 # ---------------------------------------------------------------------------
 # 4. Rango de años de la sugerencia
 # ---------------------------------------------------------------------------
@@ -547,6 +571,324 @@ def test_firebase_habilitado_segun_api_key():
         _assert(auth.firebase_habilitado() is True, "con API key debe estar habilitado")
     finally:
         auth.FIREBASE_API_KEY = orig
+def test_evidencia_se_normaliza_a_a4_sin_recorte():
+    """Toda evidencia pasa a A4 conservando proporción y orientación visual."""
+    from pypdf._page import PageObject
+
+    for width, height in ((612, 792), (792, 612), (400, 1000)):
+        original = PageObject.create_blank_page(width=width, height=height)
+        resultado = _normalizar_pagina_a4(original)
+        _assert(abs(float(resultado.mediabox.width) - _A4_WIDTH) < 0.01, "el ancho no quedó en A4")
+        _assert(abs(float(resultado.mediabox.height) - _A4_HEIGHT) < 0.01, "el alto no quedó en A4")
+
+
+def test_todos_los_flujos_de_fusion_normalizan_evidencia_a_a4():
+    """Tabs y exhibits con ancla deben convertir la evidencia a A4 también sin numerarla."""
+    from pypdf import PdfReader
+    from reportlab.pdfgen import canvas
+
+    with tempfile.TemporaryDirectory() as temp:
+        base = Path(temp)
+        evidencia = base / "evidencia-horizontal.pdf"
+        c = canvas.Canvas(str(evidencia), pagesize=(792, 612))
+        c.drawString(40, 40, "Evidence")
+        c.save()
+
+        portada = base / "portada.pdf"
+        c = canvas.Canvas(str(portada))
+        c.drawString(40, 700, "COVER")
+        c.showPage()
+        c.drawString(40, 700, "PROOF OF SERVICE")
+        c.save()
+        final_tabs = base / "tabs.pdf"
+        combinar_portada_y_evidencia(portada, [evidencia], 1, final_tabs)
+        pagina_tabs = PdfReader(str(final_tabs)).pages[1]
+
+        portada_exhibits = base / "portada-exhibits.pdf"
+        c = canvas.Canvas(str(portada_exhibits))
+        c.drawString(40, 700, "EXHIBIT A")
+        c.save()
+        final_exhibits = base / "exhibits.pdf"
+        combinar_portada_y_evidencia_exhibits(
+            portada_exhibits, {"A": [evidencia]}, 1, final_exhibits, numerar=False
+        )
+        pagina_exhibits = PdfReader(str(final_exhibits)).pages[1]
+
+        for pagina in (pagina_tabs, pagina_exhibits):
+            _assert(abs(float(pagina.mediabox.width) - _A4_WIDTH) < 0.01, "evidencia no quedó en A4")
+            _assert(abs(float(pagina.mediabox.height) - _A4_HEIGHT) < 0.01, "evidencia no quedó en A4")
+
+
+# ---------------------------------------------------------------------------
+# 5. Seguridad de almacenamiento y API
+# ---------------------------------------------------------------------------
+
+def _caso_base() -> dict:
+    return {
+        "id": "persona-prueba-123456789",
+        "cliente_nombre": "PERSONA PRUEBA, NOMBRE",
+        "a_number": "123-456-789",
+        "corte_sede": "LOS ANGELES IMMIGRATION COURT",
+        "juez": "APELLIDO COMPUESTO MUY LARGO, NOMBRE",
+        "proxima_audiencia": "December 31, 2027 at 11:59 PM, Individual Hearing",
+        "abogado": "John Negron, Esq. (SBN 21806)",
+        "preparador": "Bruno Briz",
+        "riders": [],
+        "siguiente_pagina": 1,
+    }
+
+
+def test_case_store_bloquea_path_traversal_y_es_atomico():
+    with tempfile.TemporaryDirectory() as temp:
+        store = Path(temp) / "case_store"
+        outside = Path(temp) / "catalogos.json"
+        outside.write_text("intacto", encoding="utf-8")
+        caso = _caso_base()
+        save_case(caso, store)
+        caso["siguiente_pagina"] = 9
+        save_case(caso, store)
+        _assert(load_case(caso["id"], store)["siguiente_pagina"] == 9, "no guardó la versión nueva")
+        _assert((store / f"{caso['id']}.json.bak").exists(), "no creó el respaldo atómico")
+        _assert(outside.read_text(encoding="utf-8") == "intacto", "se alteró un archivo fuera de case_store")
+        try:
+            save_case({**caso, "id": "../catalogos"}, store)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("se aceptó un identificador con path traversal")
+
+
+def test_api_rechaza_solicitudes_externas_y_json_malformado():
+    import app as app_module
+
+    client = app_module.app.test_client()
+    response = client.post("/api/casos", json={})
+    _assert(response.status_code == 403, f"sin cabecera local devolvió {response.status_code}")
+    response = client.post(
+        "/api/generar",
+        json={"case_id": "caso-valido", "document_instance": "no-es-objeto"},
+        headers={"X-EOIR-Request": "1"},
+    )
+    _assert(response.status_code == 400, f"document_instance malformado devolvió {response.status_code}")
+
+
+def test_login_y_logout_incluyen_proteccion_local():
+    import app as app_module
+
+    originales = app_module.auth.firebase_habilitado, app_module.auth.verify_login
+    try:
+        app_module.auth.firebase_habilitado = lambda: False
+        app_module.auth.verify_login = lambda usuario, _password: {
+            "usuario": usuario,
+            "nombre": "Usuario de prueba",
+        }
+        client = app_module.app.test_client()
+        response = client.post(
+            "/api/login",
+            json={"usuario": "prueba", "password": "clave"},
+            headers={"X-EOIR-Request": "1"},
+        )
+        _assert(response.status_code == 200, f"login protegido devolvió {response.status_code}")
+        response = client.post("/api/logout", headers={"X-EOIR-Request": "1"})
+        _assert(response.status_code == 200, f"logout protegido devolvió {response.status_code}")
+    finally:
+        app_module.auth.firebase_habilitado, app_module.auth.verify_login = originales
+
+
+def test_paginas_de_autenticacion_respetan_csp():
+    static_dir = Path(__file__).resolve().parent.parent / "static"
+    login_html = (static_dir / "login.html").read_text(encoding="utf-8")
+    ayuda_html = (static_dir / "como-funciona.html").read_text(encoding="utf-8")
+    _assert('<script src="/static/login.js"></script>' in login_html, "login conserva JavaScript inline")
+    _assert(
+        '<script src="/static/como-funciona.js"></script>' in ayuda_html,
+        "la ayuda conserva JavaScript inline",
+    )
+    _assert("X-EOIR-Request" in (static_dir / "login.js").read_text(encoding="utf-8"), "login omite cabecera local")
+    _assert(
+        "X-EOIR-Request" in (static_dir / "como-funciona.js").read_text(encoding="utf-8"),
+        "logout de ayuda omite cabecera local",
+    )
+
+
+def test_estado_no_avanza_si_falla_merge_de_evidencia():
+    import app as app_module
+
+    caso = _caso_base()
+    caso["ultimo_tab_letra"] = "A"
+    original = {
+        "load_case": app_module.load_case,
+        "save_case": app_module.save_case,
+        "generar_lote": app_module.generar_lote,
+        "combinar": app_module.combinar_portada_y_evidencia_exhibits,
+    }
+    evidence_id = "a" * 32
+    old_evidence = dict(app_module._EVIDENCIAS)
+    saved: list[dict] = []
+    try:
+        app_module.load_case = lambda _case_id: dict(caso)
+        app_module.save_case = lambda value: saved.append(dict(value)) or value
+        app_module.generar_lote = lambda *_args, **_kwargs: [
+            SimpleNamespace(
+                docx_path=Path("portada.docx"), pdf_path=Path("portada.pdf"),
+                preview_images=[], validation_ok=True, validation_errors=[]
+            )
+        ]
+        app_module.combinar_portada_y_evidencia_exhibits = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            app_module.PdfMergeError("fallo deliberado")
+        )
+        app_module._EVIDENCIAS[evidence_id] = {
+            "path": Path("evidencia.pdf"), "num_paginas": 1, "nombre": "evidencia.pdf",
+            "created_at": 9999999999,
+        }
+        response = app_module.app.test_client().post(
+            "/api/generar",
+            json={
+                "case_id": caso["id"],
+                "generar_pdf": True,
+                "document_instance": {
+                    "template_id": "motion-withdraw-cancelation",
+                    "titulo": "MOTION TO WITHDRAW",
+                    "direccion_anterior": "Anterior",
+                    "direccion_actual": "Actual",
+                    "fecha_cancelacion": "March 3, 2026",
+                    "exhibits_evidencia": {"A": [evidence_id]},
+                },
+            },
+            headers={"X-EOIR-Request": "1"},
+        )
+        data = response.get_json()
+        _assert(response.status_code == 200, f"la generación simulada devolvió {response.status_code}: {data}")
+        _assert(data["estado_caso_guardado"] is False, "reportó el estado como guardado tras fallar el merge")
+        _assert(not saved, "avanzó el estado persistido después de fallar el merge")
+    finally:
+        app_module.load_case = original["load_case"]
+        app_module.save_case = original["save_case"]
+        app_module.generar_lote = original["generar_lote"]
+        app_module.combinar_portada_y_evidencia_exhibits = original["combinar"]
+        app_module._EVIDENCIAS.clear()
+        app_module._EVIDENCIAS.update(old_evidence)
+
+
+# ---------------------------------------------------------------------------
+# 6. Integración de plantillas y EOIR-33
+# ---------------------------------------------------------------------------
+
+def test_todas_las_plantillas_word_generan_y_proxima_audiencia_no_se_recorta():
+    case = _caso_base()
+    common = {"titulo": "SUPPLEMENTAL EVIDENCE", "exhibits": []}
+    extras = {
+        "written-pleadings": {
+            "fecha_nta": "March 4, 2024", "alegaciones_admitidas": "1 through 4",
+            "cargo_removibilidad": "INA 212(a)(6)(A)(i)",
+            "designacion_pais_remocion": "respectfully declines to designate a country of removal",
+            "formas_alivio": "I-589 Asylum, Withholding of Removal, and CAT", "horas_estimadas": "2",
+            "idioma_interprete": "Spanish", "dialecto_interprete": "", "traductor": "Bruno Briz",
+            "traductor_abreviado": "BB", "documento_traducido": "DECLARATION OF PLEADINGS",
+        },
+        "motion-withdraw-cancelation": {
+            "direccion_anterior": "Dirección anterior", "direccion_actual": "Dirección actual",
+            "fecha_cancelacion": "March 3, 2026", "exhibits_evidencia": {},
+        },
+        "motion-withdraw-location-known": {"direccion_conocida": "Dirección conocida", "exhibits_evidencia": {}},
+        "motion-withdraw-no-cooperation": {
+            "direccion_conocida": "Dirección conocida", "telefono_conocido": "555-0100",
+            "exhibits_evidencia": {},
+        },
+    }
+    template_ids = [
+        "i589-tab-cover", "webex-motion", "written-pleadings", "motion-withdraw-cancelation",
+        "motion-withdraw-location-known", "motion-withdraw-no-cooperation",
+    ]
+    with tempfile.TemporaryDirectory() as temp:
+        out = Path(temp)
+        for template_id in template_ids:
+            instance = {**common, "template_id": template_id, **extras.get(template_id, {})}
+            result = generar_documento(case, instance, output_dir=out, verificar_pdf=False)
+            _assert(result.validation_ok and result.docx_path.exists(), f"falló la plantilla {template_id}")
+            with zipfile.ZipFile(result.docx_path) as archive:
+                xml = archive.read("word/document.xml").decode("utf-8")
+            _assert("Next " in xml and "Hearing: " in xml, f"{template_id} no contiene la audiencia ajustada")
+            _assert("<w:br" in xml, f"{template_id} no separó juez y audiencia en dos líneas")
+            _assert('w:jc w:val="left"' in xml, f"{template_id} no alineó juez y audiencia a la izquierda")
+
+
+def test_eoir33_llena_corte_contacto_y_servicio_condicional():
+    from pypdf import PdfReader
+
+    case = _caso_base()
+    instance = {
+        "template_id": "eoir-33-change-address", "direccion_anterior": "100 OLD ST",
+        "ciudad_anterior": "OLD CITY, CA 90001", "direccion_actual": "200 NEW ST",
+        "ciudad_actual": "LOS ANGELES, CA 90012", "telefono_anterior": "555-0101",
+        "email_anterior": "old@example.com", "telefono_actual": "555-0102",
+        "email_actual": "new@example.com",
+        "direccion_corte": "LOS ANGELES IMMIGRATION COURT, 606 S OLIVE ST, LOS ANGELES, CA 90014",
+        "servicio_ecas": False, "direccion_servicio_1": "OPLA LOS ANGELES",
+        "direccion_servicio_2": "300 N LOS ANGELES ST, LOS ANGELES, CA 90012",
+    }
+    with tempfile.TemporaryDirectory() as temp:
+        result = generar_pdf_formulario(case, instance, output_dir=Path(temp))
+        _assert(result.validation_ok, f"EOIR-33 no pasó validación: {result.validation_errors}")
+        fields = PdfReader(result.pdf_path).get_fields()
+        court_value = str(fields["CourtAddress"].get("/V"))
+        court_normalized = " ".join(court_value.split())
+        _assert("NEWARK" not in court_normalized.upper(), "conservó la corte predeterminada")
+        _assert(
+            all(
+                fragment in court_normalized
+                for fragment in ("LOS ANGELES IMMIGRATION COURT", "606 S OLIVE ST", "90014")
+            ),
+            "la dirección de corte quedó incompleta",
+        )
+        _assert(str(fields["No Service Needed"].get("/V")) == "/Off", "marcó servicio ECAS cuando era falso")
+        _assert(str(fields["email address - current"].get("/V")) == "new@example.com", "omitió el correo actual")
+
+
+def test_ui_declaraciones_por_lider_y_riders_se_regenera():
+    """Contrato mínimo de UI para no volver a ocultar las declaraciones
+    individuales al guardar o editar un rider.
+
+    La prueba funcional de navegador confirma el flujo completo; este chequeo
+    sin dependencias mantiene cubierto el punto de regresión en la suite que
+    corre el despacho localmente.
+    """
+    source = (Path(__file__).resolve().parent.parent / "static" / "app.js").read_text(encoding="utf-8")
+    _assert('class="declaraciones-tab"' in source, "falta el contenedor de declaraciones por Tab")
+    _assert("function renderDeclaracionesUploads(card)" in source, "falta el render de declaraciones por persona")
+    _assert(
+        "renderIdentidadesUploads(card);\n    renderBiometricosUploads(card);\n    renderDeclaracionesUploads(card);" in source,
+        "la actualización de personas no refresca declaraciones",
+    )
+
+
+def test_ui_busqueda_de_casos_por_nombre_y_a_number():
+    """La búsqueda de casos debe cubrir texto de nombre y los dígitos del A#."""
+    source = (Path(__file__).resolve().parent.parent / "static" / "app.js").read_text(encoding="utf-8")
+    html = (Path(__file__).resolve().parent.parent / "static" / "index.html").read_text(encoding="utf-8")
+    _assert('id="buscarCaso"' in html, "falta el campo de búsqueda de casos")
+    _assert("function casosQueCoinciden(query)" in source, "falta el filtro de casos")
+    _assert("nombre.includes(texto)" in source, "la búsqueda no contempla el nombre")
+    _assert('aNumber.replace(/\\D/g, "").includes(digitos)' in source, "la búsqueda no contempla dígitos de A#")
+    _assert("configurarBusquedaCasos();" in source, "la búsqueda no se inicializa")
+
+
+def test_ui_cambio_de_caso_reinicia_generador():
+    """No debe quedar estado de la sección 2 al cargar otro expediente."""
+    source = (Path(__file__).resolve().parent.parent / "static" / "app.js").read_text(encoding="utf-8")
+    _assert("function resetDocumentFormForCase()" in source, "falta el reinicio del generador")
+    _assert('$("#resultado").innerHTML = "";' in source, "el resultado anterior no se limpia")
+    _assert("MOTION_EXHIBITS_EVIDENCIA = {};" in source, "la evidencia de motions queda ligada al caso anterior")
+    _assert("const loadVersion = ++CASE_LOAD_VERSION;\n  resetDocumentFormForCase();" in source, "cargar otro caso no reinicia la sección 2")
+    _assert("if (loadVersion !== CASE_LOAD_VERSION) return;" in source, "una carga anterior puede sobrescribir el caso nuevo")
+    _assert(
+        "CURRENT_CASE_RIDERS = saved.riders || [];\n    actualizarPersonasDeCasoEnTabs();" in source,
+        "guardarCaso no actualiza declaraciones tras persistir riders",
+    )
+    _assert(
+        "input.addEventListener(\"blur\", actualizarRidersEnTabs);" in source,
+        "editar un rider no refresca las declaraciones abiertas",
+    )
 
 
 def main() -> int:

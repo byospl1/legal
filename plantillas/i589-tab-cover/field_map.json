@@ -127,6 +127,10 @@
     }
   ],
   "tiene_tabla_exhibits": true,
+  "audiencia_layout": {
+    "juez_label": "Honorable Judge: ",
+    "audiencia_label": "Next Court Hearing: "
+  },
   "plural_riders": [
     {
       "buscar": ">Respondent<",

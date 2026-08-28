@@ -47,14 +47,13 @@ def rezip(src_dir: Path, out_path: Path) -> None:
     fd, tmp_name = tempfile.mkstemp(prefix=out_path.name + ".", suffix=".tmp", dir=out_path.parent)
     tmp_out = Path(tmp_name)
     try:
-        with os.fdopen(fd, "wb") as fh:
-            with zipfile.ZipFile(fh, "w", zipfile.ZIP_DEFLATED) as zf:
-                if ct.exists():
-                    zf.write(ct, ct.relative_to(src_dir), compress_type=zipfile.ZIP_STORED)
-                for f in files:
-                    if f == ct:
-                        continue
-                    zf.write(f, f.relative_to(src_dir))
+        with os.fdopen(fd, "wb") as fh, zipfile.ZipFile(fh, "w", zipfile.ZIP_DEFLATED) as zf:
+            if ct.exists():
+                zf.write(ct, ct.relative_to(src_dir), compress_type=zipfile.ZIP_STORED)
+            for f in files:
+                if f == ct:
+                    continue
+                zf.write(f, f.relative_to(src_dir))
         if out_path.exists():
             mode = out_path.stat().st_mode & 0o777
         else:
@@ -161,9 +160,8 @@ def _next_element_sibling(node):
 def _next_sibling_run(node, run_names: set[str]):
     sibling = node.nextSibling
     while sibling:
-        if sibling.nodeType == sibling.ELEMENT_NODE:
-            if sibling.tagName in run_names:
-                return sibling
+        if sibling.nodeType == sibling.ELEMENT_NODE and sibling.tagName in run_names:
+            return sibling
         sibling = sibling.nextSibling
     return None
 
