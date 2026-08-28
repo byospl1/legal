@@ -217,6 +217,10 @@ desde ZIP y no exige Git ni credenciales de GitHub en las PCs. El paquete y su
 manifiesto se publican automáticamente en cada push a `main`, después de la
 configuración administrativa siguiente.
 
+Las copias anteriores a la incorporación de `motor/updater.py` requieren una
+actualización manual inicial, porque todavía no contienen código capaz de
+actualizarse. A partir de esta versión, las siguientes sí son automáticas.
+
 ### Activación administrativa (una sola vez)
 
 1. Publica `firestore.rules`, que incluye `device_bindings`,

@@ -42,6 +42,8 @@ El login de Firebase y la comprobación del dispositivo necesitan Internet. No c
 
 Al iniciar sesión también se comprueba la última versión obligatoria. Si existe una actualización, se descarga desde Firebase, se verifica, la aplicación se cierra y vuelve a abrir automáticamente. Espera a que el navegador recargue el login y entra otra vez. La actualización conserva casos, documentos generados, firmas, usuarios y configuración local.
 
+Las instalaciones hechas antes de que existiera este actualizador necesitan recibir esta versión manualmente una sola vez. Antes de reemplazar su carpeta, respalda `case_store/`, `output/`, `input/`, `firmas/`, `usuarios/` y los archivos `firebase-*.txt`; restáuralos en la nueva copia y ejecuta `instalar.bat`. Las versiones posteriores se instalarán automáticamente.
+
 ### Inicio local alternativo
 
 Si una copia no tiene `firebase-api-key.txt`, `iniciar.bat` usa usuarios locales. Antes del primer inicio:
