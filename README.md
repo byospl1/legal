@@ -132,9 +132,9 @@ sesión.
 - Los usuarios inician sesión con su **correo** (el que creaste en Firebase),
   no con un usuario corto.
 - La *Web API key* no es secreta (es la misma que llevaría cualquier app
-  cliente), pero es específica de tu instalación — por eso
-  `firebase-api-key.txt` no se sube al repositorio. Pon ese archivo solo en
-  las computadoras del despacho.
+  cliente). En este repositorio privado, `firebase-api-key.txt` y
+  `firebase-project-id.txt` están versionados a propósito para que la
+  configuración llegue a las computadoras autorizadas.
 - Si no hay internet al momento de entrar, aparece un aviso claro y no se
   puede iniciar sesión (la validación es en línea).
 - Para volver al login local, borra o renombra `firebase-api-key.txt`.
@@ -165,6 +165,16 @@ máquina).
          allow read, create: if request.auth != null && request.auth.uid == uid;
          allow update, delete: if false;
        }
+
+       match /app_config/windows_update {
+         allow get: if request.auth != null;
+         allow write: if false;
+       }
+
+       match /app_updates/{version}/chunks/{chunkId} {
+         allow get: if request.auth != null;
+         allow write: if false;
+       }
      }
    }
    ```
@@ -186,6 +196,61 @@ máquina).
 > (`%USERPROFILE%\.eoir-device-id`), así que sobrevive a actualizaciones del
 > programa. Si no hay internet al iniciar sesión, no se puede entrar (la
 > verificación es en línea, igual que el login).
+
+## Actualizaciones obligatorias de Windows
+
+Cuando el usuario inicia sesión con Firebase, el programa consulta la versión
+publicada en Firestore. Si es distinta de la instalada:
+
+1. descarga desde Firestore los fragmentos privados del ZIP con el token del
+   usuario y reconstruye el paquete localmente;
+2. verifica el SHA-256 antes de abrirlo;
+3. valida que el ZIP no contenga rutas inseguras ni archivos fuera de su
+   manifiesto;
+4. cierra el servidor, actualiza el código y las dependencias, y reinicia;
+5. conserva `case_store/`, `output/`, `input/`, `usuarios/`, `firmas/`,
+   `venv/`, `.env` y los archivos de configuración de Firebase;
+6. restaura el código anterior si el reemplazo falla.
+
+La actualización no usa `git pull`, así que funciona en instalaciones hechas
+desde ZIP y no exige Git ni credenciales de GitHub en las PCs. El paquete y su
+manifiesto se publican automáticamente en cada push a `main`, después de la
+configuración administrativa siguiente.
+
+### Activación administrativa (una sola vez)
+
+1. Publica `firestore.rules`, que incluye `device_bindings`,
+   `app_config/windows_update` y `app_updates/{version}/chunks/{chunkId}`. Se
+   puede pegar en Firebase Console o ejecutar, después de `firebase login`:
+
+   ```
+   firebase deploy --only firestore:rules --project TU_PROJECT_ID
+   ```
+2. En Google Cloud IAM crea una cuenta de servicio exclusiva para publicar
+   actualizaciones. Asígnale el rol **Cloud Datastore User** para escribir en
+   Firestore; descarga su clave JSON y no la guardes en el repo.
+3. En GitHub → **Settings → Secrets and variables → Actions**, crea:
+   - secret `FIREBASE_SERVICE_ACCOUNT_JSON`: contenido completo de la clave
+     JSON de esa cuenta de servicio;
+   - variable `FIREBASE_PROJECT_ID`: ID del proyecto Firebase;
+   - variable `FIREBASE_AUTO_UPDATE_ENABLED`: `true`.
+4. Ejecuta una vez el workflow **Publicar actualización obligatoria de
+   Windows** o haz un push a `main`.
+
+El workflow crea un paquete con la versión igual al SHA del commit, lo divide
+en documentos menores al límite de Firestore y solo después publica su versión,
+cantidad de fragmentos, tamaño y SHA-256. Si la publicación falla, las
+instalaciones siguen usando la versión anterior. Este diseño no necesita
+Firebase Storage ni el plan Blaze; sí consume las cuotas de almacenamiento,
+lecturas y escrituras de Firestore.
+
+Para detener temporalmente nuevas publicaciones, cambia
+`FIREBASE_AUTO_UPDATE_ENABLED` a `false`. Esto no borra la versión ya exigida.
+Las versiones anteriores permanecen en `app_updates/`; elimina manualmente las
+más antiguas cuando ya no haya instalaciones descargándolas para no acumular
+almacenamiento indefinidamente.
+Para revisar fallos en una PC, abre
+`%LOCALAPPDATA%\EOIRTabs\update.log` y `_update\last_error.txt`.
 
 ## Agregar una plantilla `.dotx` nueva
 

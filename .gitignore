@@ -4,6 +4,10 @@ __pycache__/
 .coverage
 .ruff_cache/
 _qa_auditoria*/
+_update/
+update-files.json
+windows-update.zip
+gha-creds-*.json
 
 # datos de clientes: no se suben al repositorio
 case_store/*.json*

@@ -40,6 +40,8 @@ La primera entrada de una cuenta en una computadora registra esa cuenta en ese e
 
 El login de Firebase y la comprobación del dispositivo necesitan Internet. No compartas las credenciales entre personas.
 
+Al iniciar sesión también se comprueba la última versión obligatoria. Si existe una actualización, se descarga desde Firebase, se verifica, la aplicación se cierra y vuelve a abrir automáticamente. Espera a que el navegador recargue el login y entra otra vez. La actualización conserva casos, documentos generados, firmas, usuarios y configuración local.
+
 ### Inicio local alternativo
 
 Si una copia no tiene `firebase-api-key.txt`, `iniciar.bat` usa usuarios locales. Antes del primer inicio:
@@ -137,6 +139,7 @@ El sistema automatiza el llenado y la organización; no sustituye la revisión l
 - **No existe `venv/`**: ejecuta `instalar.bat` desde la raíz correcta del repositorio.
 - **Python se instaló pero no aparece**: cierra la consola, abre una nueva y ejecuta de nuevo `instalar.bat`.
 - **No puede iniciar sesión**: comprueba Internet, correo/contraseña y que la cuenta exista en Firebase; en modo local, crea la cuenta con `gestionar-usuarios.bat`.
+- **La actualización obligatoria falla**: vuelve a intentarlo con Internet estable. Si persiste, envía al administrador el contenido de `%LOCALAPPDATA%\EOIRTabs\update.log` y `_update\last_error.txt`, después de verificar que no incluyan datos de clientes.
 - **No se genera el PDF**: verifica que LibreOffice esté instalado y revisa el error mostrado en la consola. Conserva el `.docx` para revisión manual.
 - **No aparecen las páginas de evidencia**: genera antes de reiniciar; los PDFs temporales no sobreviven al reinicio.
 - **Necesitas ayuda o una mejora**: abre un [request (Issue) en el repositorio](https://github.com/byospl1/legal/issues/new), indicando versión/commit, Windows, pasos para reproducir y el mensaje de error, sin datos de clientes ni contraseñas.
@@ -165,3 +168,13 @@ Esta sección es solo para quien mantiene el repositorio; el usuario diario no d
 
 7. Prueba manualmente login, creación/carga de caso, generación con y sin evidencia, PDF, descarga y eliminación antes de publicar cambios.
 
+## 12. Administradores: activar las actualizaciones obligatorias
+
+El código del actualizador ya está incluido, pero la distribución privada requiere una configuración única en Firebase y GitHub:
+
+1. En Firestore permite lectura autenticada de `app_config/windows_update` y `app_updates/{version}/chunks/{chunkId}`; conserva las escrituras bloqueadas para clientes.
+2. Crea una cuenta de servicio de Google dedicada a publicar paquetes, con el rol `Cloud Datastore User`.
+3. En GitHub Actions agrega el secret `FIREBASE_SERVICE_ACCOUNT_JSON` y las variables `FIREBASE_PROJECT_ID` y `FIREBASE_AUTO_UPDATE_ENABLED=true`.
+4. Ejecuta el workflow **Publicar actualización obligatoria de Windows**. Desde entonces, cada push a `main` publica el ZIP fragmentado en Firestore y obliga a las PCs a instalarlo en el siguiente login con Internet.
+
+Las reglas exactas y el procedimiento completo están en `README.md`, sección **Actualizaciones obligatorias de Windows**. No pongas la clave JSON de la cuenta de servicio dentro del repositorio ni en las computadoras de los usuarios.

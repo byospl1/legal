@@ -24,7 +24,7 @@ from flask import Flask, jsonify, redirect, request, send_file, send_from_direct
 
 from werkzeug.utils import secure_filename
 
-from motor import auth
+from motor import auth, updater
 from motor.case_store import (
     CASE_STORE_DIR,
     delete_case,
@@ -167,7 +167,7 @@ def _exigir_login():
 
 @app.get("/healthz")
 def healthz():
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "version": updater.version_actual()})
 
 
 @app.get("/login")
@@ -238,6 +238,43 @@ def api_login():
                             }
                         ),
                         403,
+                    )
+            # Actualización obligatoria de las instalaciones Windows. Se
+            # consulta DESPUÉS de validar cuenta y dispositivo, para que solo
+            # usuarios autorizados puedan leer/descargar el paquete privado.
+            if updater.habilitado() and auth.FIREBASE_PROJECT_ID:
+                try:
+                    pendiente = updater.buscar_actualizacion(
+                        signin["id_token"], auth.FIREBASE_PROJECT_ID
+                    )
+                    if pendiente is not None:
+                        payload_dir = updater.descargar_y_preparar(
+                            pendiente,
+                            signin["id_token"],
+                            project_id=auth.FIREBASE_PROJECT_ID,
+                        )
+                        updater.iniciar_actualizacion(payload_dir, pendiente.version)
+                        updater.programar_cierre()
+                        return (
+                            jsonify(
+                                {
+                                    "actualizando": True,
+                                    "version": pendiente.version,
+                                    "mensaje": "Actualización obligatoria descargada. "
+                                    "La aplicación se reiniciará automáticamente.",
+                                }
+                            ),
+                            426,
+                        )
+                except updater.UpdateError as exc:
+                    return (
+                        jsonify(
+                            {
+                                "error": "No se pudo instalar la actualización obligatoria: "
+                                f"{exc}. Intenta de nuevo o avisa al administrador."
+                            }
+                        ),
+                        503,
                     )
             info = {"usuario": signin["usuario"], "nombre": signin["nombre"]}
     else:

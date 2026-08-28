@@ -1,0 +1,20 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /device_bindings/{uid} {
+      allow read, create: if request.auth != null && request.auth.uid == uid;
+      allow update, delete: if false;
+    }
+
+    match /app_config/windows_update {
+      allow get: if request.auth != null;
+      allow write: if false;
+    }
+
+    match /app_updates/{version}/chunks/{chunkId} {
+      allow get: if request.auth != null;
+      allow write: if false;
+    }
+  }
+}

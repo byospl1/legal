@@ -695,6 +695,61 @@ def test_login_y_logout_incluyen_proteccion_local():
         app_module.auth.firebase_habilitado, app_module.auth.verify_login = originales
 
 
+def test_login_firebase_aplica_actualizacion_obligatoria():
+    import app as app_module
+
+    original = {
+        "firebase_habilitado": app_module.auth.firebase_habilitado,
+        "firebase_signin": app_module.auth.firebase_signin,
+        "device_binding_habilitado": app_module.auth.device_binding_habilitado,
+        "project_id": app_module.auth.FIREBASE_PROJECT_ID,
+        "updater_habilitado": app_module.updater.habilitado,
+        "buscar": app_module.updater.buscar_actualizacion,
+        "descargar": app_module.updater.descargar_y_preparar,
+        "iniciar": app_module.updater.iniciar_actualizacion,
+        "cerrar": app_module.updater.programar_cierre,
+    }
+    calls = []
+    try:
+        app_module.auth.firebase_habilitado = lambda: True
+        app_module.auth.firebase_signin = lambda *_args: {
+            "usuario": "prueba@example.com",
+            "nombre": "Prueba",
+            "id_token": "token",
+            "uid": "uid",
+        }
+        app_module.auth.device_binding_habilitado = lambda: False
+        app_module.auth.FIREBASE_PROJECT_ID = "project"
+        app_module.updater.habilitado = lambda: True
+        pending = app_module.updater.UpdateInfo(
+            "version-nueva", "a" * 64, 1, 100
+        )
+        app_module.updater.buscar_actualizacion = lambda *_args: pending
+        app_module.updater.descargar_y_preparar = lambda *_args, **_kwargs: Path("payload")
+        app_module.updater.iniciar_actualizacion = lambda payload, version: calls.append((payload, version))
+        app_module.updater.programar_cierre = lambda: calls.append("cierre")
+
+        response = app_module.app.test_client().post(
+            "/api/login",
+            json={"usuario": "prueba@example.com", "password": "clave"},
+            headers={"X-EOIR-Request": "1"},
+        )
+        data = response.get_json()
+        _assert(response.status_code == 426, f"actualización obligatoria devolvió {response.status_code}")
+        _assert(data["actualizando"] is True, "no informó que la actualización está en curso")
+        _assert(calls == [(Path("payload"), "version-nueva"), "cierre"], "no inició actualización y cierre")
+    finally:
+        app_module.auth.firebase_habilitado = original["firebase_habilitado"]
+        app_module.auth.firebase_signin = original["firebase_signin"]
+        app_module.auth.device_binding_habilitado = original["device_binding_habilitado"]
+        app_module.auth.FIREBASE_PROJECT_ID = original["project_id"]
+        app_module.updater.habilitado = original["updater_habilitado"]
+        app_module.updater.buscar_actualizacion = original["buscar"]
+        app_module.updater.descargar_y_preparar = original["descargar"]
+        app_module.updater.iniciar_actualizacion = original["iniciar"]
+        app_module.updater.programar_cierre = original["cerrar"]
+
+
 def test_paginas_de_autenticacion_respetan_csp():
     static_dir = Path(__file__).resolve().parent.parent / "static"
     login_html = (static_dir / "login.html").read_text(encoding="utf-8")
@@ -709,6 +764,7 @@ def test_paginas_de_autenticacion_respetan_csp():
         "X-EOIR-Request" in (static_dir / "como-funciona.js").read_text(encoding="utf-8"),
         "logout de ayuda omite cabecera local",
     )
+    _assert("response.status === 426" in (static_dir / "login.js").read_text(encoding="utf-8"), "login no maneja actualización obligatoria")
 
 
 def test_estado_no_avanza_si_falla_merge_de_evidencia():

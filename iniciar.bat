@@ -12,6 +12,10 @@ call venv\Scripts\activate.bat
 REM Control de accesos: el login es OBLIGATORIO para entrar al sistema.
 set EOIR_LOGIN=1
 
+REM En Windows, después del login Firebase se comprueba y aplica la última
+REM actualización obligatoria publicada por el administrador.
+set EOIR_AUTO_UPDATE=1
+
 REM Modo de login:
 REM  - Si existe firebase-api-key.txt, se valida por internet contra Firebase
 REM    (las cuentas se administran en el panel de Firebase). Ver README.

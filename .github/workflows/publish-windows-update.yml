@@ -1,0 +1,55 @@
+name: Publicar actualización obligatoria de Windows
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-update-main
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    if: ${{ vars.FIREBASE_AUTO_UPDATE_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Ejecutar pruebas antes de publicar
+        run: |
+          python -m pip install --quiet -r requirements.txt
+          python tests/run_tests.py
+          python tests/test_updater.py
+
+      - name: Construir paquete Windows
+        env:
+          UPDATE_VERSION: ${{ github.sha }}
+        run: python scripts/build_update.py --version "$UPDATE_VERSION" --output "windows-update.zip"
+
+      - name: Autenticar en Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+
+      - name: Preparar Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Publicar y exigir la nueva versión
+        env:
+          UPDATE_VERSION: ${{ github.sha }}
+          FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+        run: >-
+          python scripts/publish_update.py
+          --project "$FIREBASE_PROJECT_ID"
+          --version "$UPDATE_VERSION"
+          --package "windows-update.zip"
